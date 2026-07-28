@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nothing OS — Phone Dialer Concept</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Inter:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        nothing: {
+                            black: '#0A0A0B',
+                            card: '#141416',
+                            surface: '#1E1E22',
+                            border: '#2A2A30',
+                            red: '#E5272C',
+                            redHover: '#FF3338',
+                            lightGray: '#A1A1AA',
+                            offWhite: '#EDEDED'
+                        }
+                    },
+                    fontFamily: {
+                        dot: ['"DotGothic16"', '"Space Mono"', 'monospace'],
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['"Space Mono"', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #050506;
+            color: #EDEDED;
+            font-family: 'Inter', sans-serif;
+            user-select: none;
+            overflow-x: hidden;
+        }
+
+        .font-ndot {
+            font-family: 'DotGothic16', 'Space Mono', monospace;
+            letter-spacing: 0.05em;
+        }
+
+        /* Dot Matrix Pattern background overlay */
+        .dot-matrix-bg {
+            background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 0);
+            background-size: 12px 12px;
+        }
+
+        .dot-matrix-dense {
+            background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 0);
+            background-size: 6px 6px;
+        }
+
+        /* Glassmorphism for Nothing style translucent widgets */
+        .glass-panel {
+            background: rgba(20, 20, 22, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glass-button {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glass-button:active {
+            transform: scale(0.94);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+
+        /* Glowing Glyph elements */
+        .glyph-led {
+            background-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 2px rgba(255, 255, 255, 0.2);
+            transition: all 0.2s ease;
+        }
+
+        .glyph-led.active {
+            background-color: #FFFFFF;
+            box-shadow: 0 0 12px #FFFFFF, 0 0 24px rgba(255, 255, 255, 0.8);
+        }
+
+        .glyph-led-red.active {
+            background-color: #E5272C;
+            box-shadow: 0 0 12px #E5272C, 0 0 24px rgba(229, 39, 44, 0.8);
+        }
+
+        /* Audio Visualizer Ring Animations */
+        @keyframes ring-pulse {
+            0% { transform: scale(0.95); opacity: 0.3; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+            100% { transform: scale(0.95); opacity: 0.3; }
+        }
+
+        .ring-anim-1 { animation: ring-pulse 2s infinite ease-in-out; }
+        .ring-anim-2 { animation: ring-pulse 2s infinite ease-in-out 0.4s; }
+        .ring-anim-3 { animation: ring-pulse 2s infinite ease-in-out 0.8s; }
+
+        /* Flip transition */
+        .phone-container {
+            perspective: 1200px;
+        }
+        .phone-inner {
+            transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-style: preserve-3d;
+        }
+        .phone-inner.flipped {
+            transform: rotateY(180deg);
+        }
+        .phone-front, .phone-back {
+            backface-visibility: hidden;
+        }
+        .phone-back {
+            transform: rotateY(180deg);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-2 sm:p-6 bg-black text-gray-100">
+
+    <!-- Top Concept Branding Header -->
+    <header class="w-full max-w-4xl mb-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left px-2">
+        <div>
+            <div class="flex items-center justify-center sm:justify-start gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-nothing-red animate-pulse"></span>
+                <h1 class="font-ndot text-xl tracking-wider text-white">NOTHING (R) DIALER</h1>
+                <span class="text-xs px-2 py-0.5 rounded border border-white/20 text-gray-400 font-mono">v3.0 CONCEPT</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-1">Sleek Glyph-Integrated Dialer for Nothing OS Ecosystem</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Toggle Phone Side Button -->
+            <button id="btnFlipPhone" class="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono flex items-center gap-2 transition">
+                <i class="fa-solid fa-rotate text-nothing-red"></i>
+                <span id="flipBtnText">SHOW REAR GLYPH</span>
+            </button>
+            
+            <!-- Toggle Audio Beep Sound -->
+            <button id="btnToggleSound" class="p-2 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-xs text-gray-300 transition" title="Toggle Dial Tones">
+                <i id="soundIcon" class="fa-solid fa-volume-high text-nothing-red"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Mobile Device Wrapper -->
+    <main class="phone-container w-full max-w-[390px] h-[780px] relative">
+        <div id="phoneFrame" class="phone-inner w-full h-full relative rounded-[48px] border-[10px] border-[#222226] bg-black shadow-2xl overflow-hidden shadow-red-950/20">
+
+            <!-- FRONT SCREEN -->
+            <div class="phone-front absolute inset-0 w-full h-full flex flex-col bg-black dot-matrix-bg overflow-hidden z-10">
+                
+                <!-- Status Bar -->
+                <div class="w-full pt-3 px-6 pb-2 flex items-center justify-between text-xs text-gray-400 font-mono border-b border-white/5 z-20">
+                    <span id="clockTime" class="font-ndot text-white tracking-widest text-sm">09:41</span>
+                    <!-- Dynamic Island / Glyph Status Pill -->
+                    <div id="glyphStatusPill" class="px-2.5 py-0.5 rounded-full bg-white/10 border border-white/10 text-[10px] text-gray-300 flex items-center gap-1.5 cursor-pointer hover:bg-white/20 transition" onclick="flipPhone()">
+                        <span class="w-1.5 h-1.5 rounded-full bg-nothing-red animate-ping"></span>
+                        <span id="glyphStatusText" class="font-ndot">GLYPH READY</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 text-[11px]">
+                        <i class="fa-solid fa-signal"></i>
+                        <i class="fa-solid fa-wifi"></i>
+                        <span class="font-ndot text-white">88%</span>
+                    </div>
+                </div>
+
+                <!-- Main View Container (Swappable Tabs & Call View) -->
+                <div id="appBody" class="flex-1 relative flex flex-col overflow-hidden">
+
+                    <!-- ================= TAB 1: SPEED DIAL / KEYPAD VIEW ================= -->
+                    <div id="viewKeypad" class="view-panel absolute inset-0 flex flex-col justify-between p-4 transition-opacity duration-300">
+                        
+                        <!-- Top Header & Recents Strip -->
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <h2 class="font-ndot text-lg tracking-widest text-white uppercase">KEYPAD</h2>
+                                    <span class="text-[10px] font-mono text-nothing-red px-1.5 py-0.5 rounded bg-nothing-red/10 border border-nothing-red/20">HD VOICE</span>
+                                </div>
+                                <button onclick="clearDialer()" class="text-xs font-mono text-gray-400 hover:text-white transition px-2 py-1">CLEAR</button>
+                            </div>
+
+                            <!-- Dial Number Display Input -->
+                            <div class="h-16 flex flex-col justify-end items-center px-2 py-1 text-center">
+                                <div id="phoneNumberDisplay" class="font-ndot text-3xl sm:text-4xl tracking-widest text-white min-h-[44px] break-all max-w-full overflow-hidden text-ellipsis flex items-center justify-center">
+                                    <!-- Dialed digits populated via JS -->
+                                </div>
+                                <div id="callerMatchName" class="text-xs font-mono text-nothing-red h-4 font-semibold tracking-wider opacity-0 transition-opacity">
+                                    <!-- Matching contact name preview -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Numeric Dial Keypad Grid -->
+                        <div class="grid grid-cols-3 gap-3 my-auto px-2">
+                            <!-- Button 1 -->
+                            <button onclick="pressKey('1')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">1</span>
+                                <span class="text-[9px] font-mono text-gray-500 tracking-widest"><i class="fa-solid fa-voicemail text-[8px]"></i></span>
+                            </button>
+                            <!-- Button 2 -->
+                            <button onclick="pressKey('2')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">2</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">ABC</span>
+                            </button>
+                            <!-- Button 3 -->
+                            <button onclick="pressKey('3')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">3</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">DEF</span>
+                            </button>
+
+                            <!-- Button 4 -->
+                            <button onclick="pressKey('4')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">4</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">GHI</span>
+                            </button>
+                            <!-- Button 5 -->
+                            <button onclick="pressKey('5')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">5</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">JKL</span>
+                            </button>
+                            <!-- Button 6 -->
+                            <button onclick="pressKey('6')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">6</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">MNO</span>
+                            </button>
+
+                            <!-- Button 7 -->
+                            <button onclick="pressKey('7')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">7</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">PQRS</span>
+                            </button>
+                            <!-- Button 8 -->
+                            <button onclick="pressKey('8')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">8</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">TUV</span>
+                            </button>
+                            <!-- Button 9 -->
+                            <button onclick="pressKey('9')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">9</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">WXYZ</span>
+                            </button>
+
+                            <!-- Button * -->
+                            <button onclick="pressKey('*')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold mt-1">*</span>
+                            </button>
+                            <!-- Button 0 -->
+                            <button onclick="pressKey('0')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">0</span>
+                                <span class="text-[9px] font-mono text-gray-400 tracking-widest">+</span>
+                            </button>
+                            <!-- Button # -->
+                            <button onclick="pressKey('#')" class="glass-button h-16 rounded-3xl flex flex-col items-center justify-center border-white/10 hover:border-white/30 text-white">
+                                <span class="font-ndot text-2xl font-bold">#</span>
+                            </button>
+                        </div>
+
+                        <!-- Action Bar: Call & Delete Buttons -->
+                        <div class="flex items-center justify-between px-6 pb-2 pt-2">
+                            <button onclick="addContactFromDialer()" class="w-12 h-12 rounded-full glass-button flex items-center justify-center text-gray-300 hover:text-white" title="Add Contact">
+                                <i class="fa-solid fa-user-plus text-sm"></i>
+                            </button>
+
+                            <!-- Call Button (Signature Nothing Styling) -->
+                            <button onclick="startCall()" class="w-16 h-16 rounded-full bg-white text-black hover:bg-gray-200 active:scale-95 transition-all shadow-lg shadow-white/10 flex items-center justify-center text-2xl">
+                                <i class="fa-solid fa-phone text-black"></i>
+                            </button>
+
+                            <button onclick="backspaceKey()" class="w-12 h-12 rounded-full glass-button flex items-center justify-center text-gray-300 hover:text-white active:bg-white/20" title="Delete Digit">
+                                <i class="fa-solid fa-backspace text-sm"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- ================= TAB 2: RECENTS / LOGS VIEW ================= -->
+                    <div id="viewRecents" class="view-panel absolute inset-0 hidden flex-col p-4 overflow-y-auto">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="font-ndot text-lg tracking-widest text-white uppercase">RECENTS</h2>
+                            <div class="flex gap-1 bg-white/5 p-1 rounded-full border border-white/10 text-[10px] font-mono">
+                                <button onclick="filterRecents('all')" id="btnFilterAll" class="px-2.5 py-1 rounded-full bg-white text-black font-semibold">ALL</button>
+                                <button onclick="filterRecents('missed')" id="btnFilterMissed" class="px-2.5 py-1 rounded-full text-gray-400 hover:text-white">MISSED</button>
+                            </div>
+                        </div>
+
+                        <!-- Call Log List -->
+                        <div id="recentsList" class="space-y-2.5">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- ================= TAB 3: CONTACTS VIEW ================= -->
+                    <div id="viewContacts" class="view-panel absolute inset-0 hidden flex-col p-4 overflow-y-auto">
+                        <div class="flex items-center justify-between mb-3">
+                            <h2 class="font-ndot text-lg tracking-widest text-white uppercase">CONTACTS</h2>
+                            <span id="contactsCount" class="text-xs font-mono text-gray-400">0 PEOPLE</span>
+                        </div>
+
+                        <!-- Search Bar -->
+                        <div class="relative mb-4">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-xs text-gray-400"></i>
+                            <input type="text" id="contactSearch" oninput="renderContacts()" placeholder="Search contacts..." 
+                                class="w-full bg-white/5 border border-white/10 rounded-2xl pl-9 pr-4 py-2 text-xs font-mono text-white placeholder-gray-500 focus:outline-none focus:border-nothing-red/50 transition">
+                        </div>
+
+                        <!-- Contact List -->
+                        <div id="contactsList" class="space-y-2">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- ================= ACTIVE CALL SCREEN (OVERLAY) ================= -->
+                    <div id="activeCallScreen" class="absolute inset-0 bg-black/95 backdrop-blur-xl hidden flex-col justify-between p-6 z-30 transition-all duration-300">
+                        
+                        <!-- Top Call Bar Header -->
+                        <div class="text-center pt-2">
+                            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/10 text-xs font-mono text-gray-300">
+                                <span class="w-2 h-2 rounded-full bg-nothing-red animate-ping"></span>
+                                <span id="callStatusHeading" class="font-ndot uppercase tracking-wider">CALL IN PROGRESS</span>
+                            </div>
+                            <div id="callTimer" class="font-ndot text-2xl text-white mt-3 tracking-widest">00:00</div>
+                        </div>
+
+                        <!-- Caller Visualizer & Info Section -->
+                        <div class="flex flex-col items-center justify-center my-auto">
+                            <!-- Concentric Audio Wave Visualizer Ring -->
+                            <div class="relative w-44 h-44 flex items-center justify-center mb-6">
+                                <div class="absolute inset-0 rounded-full border border-white/10 ring-anim-3"></div>
+                                <div class="absolute inset-3 rounded-full border border-nothing-red/30 ring-anim-2"></div>
+                                <div class="absolute inset-6 rounded-full border border-white/20 ring-anim-1"></div>
+                                
+                                <!-- Contact Avatar -->
+                                <div class="w-28 h-28 rounded-full bg-nothing-surface border-2 border-white/20 flex items-center justify-center overflow-hidden z-10 shadow-2xl">
+                                    <span id="callAvatarText" class="font-ndot text-3xl text-white">N</span>
+                                </div>
+                            </div>
+
+                            <!-- Name & Phone Number -->
+                            <h3 id="activeCallName" class="font-ndot text-2xl text-white tracking-widest text-center">UNKNOWN</h3>
+                            <p id="activeCallNumber" class="text-xs font-mono text-gray-400 mt-1 tracking-wider">+1 (555) 019-2831</p>
+                            <span id="activeCallLocation" class="text-[10px] font-mono text-nothing-red mt-1 px-2 py-0.5 rounded bg-nothing-red/10 border border-nothing-red/20">LONDON, UK • 5G</span>
+                        </div>
+
+                        <!-- In-Call Control Grid -->
+                        <div class="space-y-6">
+                            <div class="grid grid-cols-3 gap-4 px-2">
+                                <button onclick="toggleMute()" id="btnMute" class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-gray-300 hover:text-white">
+                                    <i class="fa-solid fa-microphone-slash text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">MUTE</span>
+                                </button>
+                                <button onclick="toggleKeypadInCall()" id="btnInCallKeypad" class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-gray-300 hover:text-white">
+                                    <i class="fa-solid fa-grip-vertical text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">KEYPAD</span>
+                                </button>
+                                <button onclick="toggleSpeaker()" id="btnSpeaker" class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-gray-300 hover:text-white">
+                                    <i class="fa-solid fa-volume-high text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">SPEAKER</span>
+                                </button>
+                                <button class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-gray-300 hover:text-white">
+                                    <i class="fa-solid fa-user-plus text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">ADD CALL</span>
+                                </button>
+                                <button onclick="toggleGlyphSync()" id="btnGlyphSync" class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-nothing-red hover:text-white border-nothing-red/30">
+                                    <i class="fa-solid fa-bolt text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">GLYPH SYNC</span>
+                                </button>
+                                <button class="glass-button h-14 rounded-2xl flex flex-col items-center justify-center text-gray-300 hover:text-white">
+                                    <i class="fa-solid fa-circle-dot text-base mb-1"></i>
+                                    <span class="text-[9px] font-mono">RECORD</span>
+                                </button>
+                            </div>
+
+                            <!-- End Call Button -->
+                            <div class="flex justify-center pb-2">
+                                <button onclick="endCall()" class="w-16 h-16 rounded-full bg-nothing-red hover:bg-nothing-redHover text-white flex items-center justify-center text-2xl shadow-lg shadow-nothing-red/30 active:scale-95 transition">
+                                    <i class="fa-solid fa-phone-slash"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- Bottom Navigation Bar (Nothing Minimal Style) -->
+                <nav id="bottomNav" class="h-16 border-t border-white/10 bg-black/90 flex items-center justify-around px-4 z-20">
+                    <button onclick="switchTab('recents')" id="navRecents" class="flex flex-col items-center gap-1 text-gray-500 hover:text-white transition">
+                        <i class="fa-solid fa-clock-rotate-left text-base"></i>
+                        <span class="text-[9px] font-mono">RECENTS</span>
+                    </button>
+
+                    <button onclick="switchTab('keypad')" id="navKeypad" class="flex flex-col items-center gap-1 text-white transition">
+                        <div class="p-1.5 rounded-full bg-white/10 text-nothing-red border border-white/15">
+                            <i class="fa-solid fa-border-all text-base"></i>
+                        </div>
+                        <span class="text-[9px] font-mono font-bold tracking-wider">KEYPAD</span>
+                    </button>
+
+                    <button onclick="switchTab('contacts')" id="navContacts" class="flex flex-col items-center gap-1 text-gray-500 hover:text-white transition">
+                        <i class="fa-solid fa-address-book text-base"></i>
+                        <span class="text-[9px] font-mono">CONTACTS</span>
+                    </button>
+                </nav>
+
+            </div>
+
+            <!-- BACK SCREEN (REAR GLYPH MATRIX INTERFACE) -->
+            <div class="phone-back absolute inset-0 w-full h-full bg-[#0E0E10] dot-matrix-dense p-5 flex flex-col justify-between overflow-hidden z-0">
+                
+                <!-- Transparent Housing Details -->
+                <div class="flex items-start justify-between">
+                    <!-- Dual Camera Bump with Glyph Light Rings -->
+                    <div class="w-20 p-2.5 rounded-3xl bg-[#1A1A1E] border border-white/10 flex flex-col gap-3 items-center shadow-inner relative">
+                        <!-- Camera 1 -->
+                        <div class="relative w-12 h-12 rounded-full bg-black border border-white/20 flex items-center justify-center">
+                            <div class="w-6 h-6 rounded-full bg-[#08182B] border border-blue-900/50 flex items-center justify-center">
+                                <div class="w-2.5 h-2.5 rounded-full bg-blue-500/40"></div>
+                            </div>
+                            <!-- Glyph LED Ring 1 -->
+                            <div id="glyphCamRing1" class="glyph-led absolute -inset-1 rounded-full border-2 border-transparent"></div>
+                        </div>
+                        <!-- Camera 2 -->
+                        <div class="relative w-12 h-12 rounded-full bg-black border border-white/20 flex items-center justify-center">
+                            <div class="w-6 h-6 rounded-full bg-[#08182B] border border-blue-900/50 flex items-center justify-center">
+                                <div class="w-2.5 h-2.5 rounded-full bg-blue-500/40"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Top Diagonal Glyph Strip -->
+                    <div class="relative w-28 h-8">
+                        <div id="glyphTopStrip" class="glyph-led w-full h-2 rounded-full transform -rotate-12"></div>
+                    </div>
+                </div>
+
+                <!-- Central Wireless Charging Coil & Large Glyph Strip -->
+                <div class="relative my-auto flex items-center justify-center">
+                    <!-- Simulated Wireless Coil Ring -->
+                    <div class="relative w-48 h-48 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center">
+                        <div class="w-36 h-36 rounded-full border border-white/10 flex items-center justify-center">
+                            <div class="w-24 h-24 rounded-full border border-dashed border-white/20 flex items-center justify-center">
+                                <span class="font-ndot text-[10px] text-gray-600 tracking-widest">NOTHING (1)</span>
+                            </div>
+                        </div>
+
+                        <!-- Central Curved Glyph Light Segment -->
+                        <div id="glyphCenterCoil" class="glyph-led absolute inset-0 rounded-full border-4 border-transparent"></div>
+                    </div>
+                </div>
+
+                <!-- Bottom Glyph Indicator Strip & Red Recording LED -->
+                <div class="flex items-end justify-between pt-4 border-t border-white/5">
+                    <!-- Bottom Bar Glyph (Call Duration / Progress Indicator) -->
+                    <div class="w-36 flex flex-col gap-1">
+                        <div id="glyphBottomBar" class="glyph-led h-2 w-full rounded-full"></div>
+                        <span class="text-[8px] font-mono text-gray-500 tracking-widest">GLYPH PROGRESS BAR</span>
+                    </div>
+
+                    <!-- Red Recording LED Indicator -->
+                    <div class="flex items-center gap-2">
+                        <div id="glyphRedDot" class="glyph-led-red w-3 h-3 rounded-full bg-nothing-red/30"></div>
+                        <span class="text-[9px] font-mono text-gray-400">REC</span>
+                    </div>
+                </div>
+
+                <!-- Footer Tag -->
+                <div class="text-center pt-2">
+                    <button onclick="flipPhone()" class="px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-[10px] font-mono text-white border border-white/15">
+                        <i class="fa-solid fa-arrow-left mr-1"></i> BACK TO FRONT DIALER
+                    </button>
+                </div>
+
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // --- State Management ---
+        let currentDialNumber = "";
+        let currentTab = "keypad";
+        let isCallActive = false;
+        let callTimerInterval = null;
+        let callSeconds = 0;
+        let isMuted = false;
+        let isSpeaker = false;
+        let isSoundEnabled = true;
+        let activeFilter = 'all';
+
+        // Sample Contact Data
+        const contacts = [
+            { id: 1, name: "Carl Pei", number: "+44 7700 900077", initial: "C", type: "Mobile", favorite: true },
+            { id: 2, name: "Akis Evangelidis", number: "+44 7700 900123", initial: "A", type: "Work", favorite: true },
+            { id: 3, name: "Design Team", number: "+1 555 019 2831", initial: "D", type: "Work", favorite: false },
+            { id: 4, name: "Madina Aliyeva", number: "+1 555 012 9944", initial: "M", type: "Mobile", favorite: true },
+            { id: 5, name: "Nothing Support", number: "+1 800 555 0199", initial: "N", type: "Support", favorite: false },
+            { id: 6, name: "Tom Holland", number: "+1 212 555 0172", initial: "T", type: "Personal", favorite: false }
+        ];
+
+        // Sample Recents Data
+        let recents = [
+            { id: 1, name: "Carl Pei", number: "+44 7700 900077", type: "incoming", time: "10:42 AM", duration: "2m 14s", missed: false },
+            { id: 2, name: "Madina Aliyeva", number: "+1 555 012 9944", type: "missed", time: "Yesterday", duration: "0s", missed: true },
+            { id: 3, name: "Unknown", number: "+1 555 982 1100", type: "outgoing", time: "Jul 22", duration: "45s", missed: false },
+            { id: 4, name: "Akis Evangelidis", number: "+44 7700 900123", type: "incoming", time: "Jul 21", duration: "8m 02s", missed: false }
+        ];
+
+        // --- Web Audio API Synth Tone Generator for Key Beeps ---
+        let audioCtx = null;
+
+        function playTone(freq = 440, type = 'sine', duration = 0.08) {
+            if (!isSoundEnabled) return;
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.log("Audio not supported or blocked");
+            }
+        }
+
+        // --- Keypad Functions ---
+        function pressKey(key) {
+            if (currentDialNumber.length < 15) {
+                currentDialNumber += key;
+                updateDialerDisplay();
+                
+                // DTMF Audio frequencies mockup
+                const freqs = { '1': 697, '2': 697, '3': 697, '4': 770, '5': 770, '6': 770, '7': 852, '8': 852, '9': 852, '0': 941, '*': 941, '#': 941 };
+                playTone(freqs[key] || 500, 'sine', 0.1);
+                
+                triggerGlyphPulse();
+            }
+        }
+
+        function backspaceKey() {
+            if (currentDialNumber.length > 0) {
+                currentDialNumber = currentDialNumber.slice(0, -1);
+                updateDialerDisplay();
+                playTone(300, 'triangle', 0.05);
+            }
+        }
+
+        function clearDialer() {
+            currentDialNumber = "";
+            updateDialerDisplay();
+        }
+
+        function updateDialerDisplay() {
+            const display = document.getElementById('phoneNumberDisplay');
+            const matchLabel = document.getElementById('callerMatchName');
+            
+            if (currentDialNumber.length === 0) {
+                display.innerHTML = `<span class="text-gray-600 font-mono text-xl tracking-normal">ENTER NUMBER</span>`;
+                matchLabel.classList.add('opacity-0');
+            } else {
+                display.innerText = currentDialNumber;
+                
+                // Check if matches known contact
+                const matched = contacts.find(c => c.number.replace(/\D/g,'').includes(currentDialNumber.replace(/\D/g,'')));
+                if (matched) {
+                    matchLabel.innerText = matched.name.toUpperCase();
+                    matchLabel.classList.remove('opacity-0');
+                } else {
+                    matchLabel.classList.add('opacity-0');
+                }
+            }
+        }
+
+        // --- Call Control Logic ---
+        function startCall(targetNumber = null, targetName = null) {
+            const numberToCall = targetNumber || currentDialNumber || "+1 (555) 019-2831";
+            const nameToCall = targetName || (contacts.find(c => c.number === numberToCall)?.name) || "UNKNOWN";
+
+            document.getElementById('activeCallNumber').innerText = numberToCall;
+            document.getElementById('activeCallName').innerText = nameToCall.toUpperCase();
+            document.getElementById('callAvatarText').innerText = nameToCall.charAt(0).toUpperCase();
+
+            // Reset Call State
+            isCallActive = true;
+            callSeconds = 0;
+            document.getElementById('callTimer').innerText = "00:00";
+            document.getElementById('callStatusHeading').innerText = "DIALING...";
+
+            // Show Call Screen Overlay
+            const screen = document.getElementById('activeCallScreen');
+            screen.classList.remove('hidden');
+            screen.classList.add('flex');
+
+            // Play Ring Tone & Start Timer
+            playTone(880, 'sine', 0.3);
+
+            setTimeout(() => {
+                if (isCallActive) {
+                    document.getElementById('callStatusHeading').innerText = "CALL IN PROGRESS";
+                    startCallTimer();
+                    triggerGlyphActiveState(true);
+                }
+            }, 1800);
+
+            // Add to Recents
+            recents.unshift({
+                id: Date.now(),
+                name: nameToCall,
+                number: numberToCall,
+                type: "outgoing",
+                time: "Just Now",
+                duration: "0s",
+                missed: false
+            });
+            renderRecents();
+        }
+
+        function endCall() {
+            isCallActive = false;
+            clearInterval(callTimerInterval);
+            
+            document.getElementById('callStatusHeading').innerText = "CALL ENDED";
+            playTone(300, 'sawtooth', 0.2);
+
+            triggerGlyphActiveState(false);
+
+            setTimeout(() => {
+                const screen = document.getElementById('activeCallScreen');
+                screen.classList.add('hidden');
+                screen.classList.remove('flex');
+                clearDialer();
+            }, 800);
+        }
+
+        function startCallTimer() {
+            clearInterval(callTimerInterval);
+            callTimerInterval = setInterval(() => {
+                callSeconds++;
+                const mins = Math.floor(callSeconds / 60).toString().padStart(2, '0');
+                const secs = (callSeconds % 60).toString().padStart(2, '0');
+                document.getElementById('callTimer').innerText = `${mins}:${secs}`;
+                
+                // Animate bottom Glyph Progress LED with call duration
+                const glyphBar = document.getElementById('glyphBottomBar');
+                if (glyphBar) {
+                    const opacity = 0.3 + (callSeconds % 2 === 0 ? 0.7 : 0.2);
+                    glyphBar.style.opacity = opacity;
+                }
+            }, 1000);
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('btnMute');
+            btn.classList.toggle('bg-white/20', isMuted);
+            btn.classList.toggle('text-nothing-red', isMuted);
+        }
+
+        function toggleSpeaker() {
+            isSpeaker = !isSpeaker;
+            const btn = document.getElementById('btnSpeaker');
+            btn.classList.toggle('bg-white/20', isSpeaker);
+            btn.classList.toggle('text-nothing-red', isSpeaker);
+        }
+
+        function toggleKeypadInCall() {
+            alert("In-Call DTMF Pad Active");
+        }
+
+        function addContactFromDialer() {
+            if (!currentDialNumber) {
+                alert("Please enter a number first!");
+                return;
+            }
+            const name = prompt("Enter Contact Name:", "New Contact");
+            if (name) {
+                contacts.push({
+                    id: Date.now(),
+                    name: name,
+                    number: currentDialNumber,
+                    initial: name.charAt(0).toUpperCase(),
+                    type: "Mobile",
+                    favorite: false
+                });
+                renderContacts();
+                switchTab('contacts');
+            }
+        }
+
+        // --- Navigation Tabs ---
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            // Hide all views
+            document.querySelectorAll('.view-panel').forEach(el => {
+                el.classList.add('hidden');
+                el.classList.remove('flex');
+            });
+
+            // Reset Nav Buttons styling
+            ['recents', 'keypad', 'contacts'].forEach(t => {
+                const navBtn = document.getElementById(`nav${t.charAt(0).toUpperCase() + t.slice(1)}`);
+                if (navBtn) {
+                    navBtn.className = "flex flex-col items-center gap-1 text-gray-500 hover:text-white transition";
+                }
+            });
+
+            // Activate Target Tab
+            if (tab === 'keypad') {
+                document.getElementById('viewKeypad').classList.remove('hidden');
+                document.getElementById('viewKeypad').classList.add('flex');
+                document.getElementById('navKeypad').className = "flex flex-col items-center gap-1 text-white transition font-bold";
+            } else if (tab === 'recents') {
+                document.getElementById('viewRecents').classList.remove('hidden');
+                document.getElementById('viewRecents').classList.add('flex');
+                document.getElementById('navRecents').className = "flex flex-col items-center gap-1 text-white transition font-bold";
+                renderRecents();
+            } else if (tab === 'contacts') {
+                document.getElementById('viewContacts').classList.remove('hidden');
+                document.getElementById('viewContacts').classList.add('flex');
+                document.getElementById('navContacts').className = "flex flex-col items-center gap-1 text-white transition font-bold";
+                renderContacts();
+            }
+        }
+
+        // --- Render Lists ---
+        function renderRecents() {
+            const list = document.getElementById('recentsList');
+            const filtered = activeFilter === 'missed' ? recents.filter(r => r.missed) : recents;
+
+            if (filtered.length === 0) {
+                list.innerHTML = `<p class="text-center text-xs font-mono text-gray-500 py-8">NO RECENTS</p>`;
+                return;
+            }
+
+            list.innerHTML = filtered.map(r => `
+                <div class="glass-button p-3 rounded-2xl flex items-center justify-between group cursor-pointer" onclick="startCall('${r.number}', '${r.name}')">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center font-ndot text-sm text-white">
+                            ${r.name.charAt(0)}
+                        </div>
+                        <div>
+                            <h4 class="font-ndot text-sm ${r.missed ? 'text-nothing-red' : 'text-white'} tracking-wider">${r.name.toUpperCase()}</h4>
+                            <div class="flex items-center gap-2 text-[10px] font-mono text-gray-400">
+                                <i class="fa-solid ${r.missed ? 'fa-arrow-down-left text-nothing-red' : r.type === 'outgoing' ? 'fa-arrow-up-right text-green-400' : 'fa-arrow-down-left text-blue-400'}"></i>
+                                <span>${r.number}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] font-mono text-gray-500">${r.time}</span>
+                        <div class="text-[9px] font-mono text-nothing-red opacity-0 group-hover:opacity-100 transition">CALL NOW</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function filterRecents(type) {
+            activeFilter = type;
+            document.getElementById('btnFilterAll').className = type === 'all' ? "px-2.5 py-1 rounded-full bg-white text-black font-semibold" : "px-2.5 py-1 rounded-full text-gray-400 hover:text-white";
+            document.getElementById('btnFilterMissed').className = type === 'missed' ? "px-2.5 py-1 rounded-full bg-white text-black font-semibold" : "px-2.5 py-1 rounded-full text-gray-400 hover:text-white";
+            renderRecents();
+        }
+
+        function renderContacts() {
+            const query = document.getElementById('contactSearch')?.value.toLowerCase() || "";
+            const list = document.getElementById('contactsList');
+            
+            const filtered = contacts.filter(c => c.name.toLowerCase().includes(query) || c.number.includes(query));
+            document.getElementById('contactsCount').innerText = `${filtered.length} PEOPLE`;
+
+            if (filtered.length === 0) {
+                list.innerHTML = `<p class="text-center text-xs font-mono text-gray-500 py-8">NO CONTACTS FOUND</p>`;
+                return;
+            }
+
+            list.innerHTML = filtered.map(c => `
+                <div class="glass-button p-3 rounded-2xl flex items-center justify-between cursor-pointer group" onclick="startCall('${c.number}', '${c.name}')">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-nothing-surface border border-white/10 flex items-center justify-center font-ndot text-base text-white">
+                            ${c.initial}
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h4 class="font-ndot text-sm text-white tracking-wider">${c.name.toUpperCase()}</h4>
+                                ${c.favorite ? '<i class="fa-solid fa-star text-[9px] text-nothing-red"></i>' : ''}
+                            </div>
+                            <span class="text-[10px] font-mono text-gray-400">${c.number} • ${c.type}</span>
+                        </div>
+                    </div>
+                    <button class="w-8 h-8 rounded-full bg-white/5 border border-white/10 group-hover:bg-white group-hover:text-black text-white flex items-center justify-center text-xs transition">
+                        <i class="fa-solid fa-phone"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        // --- Rear Glyph Interactive Visualizer Logic ---
+        function flipPhone() {
+            const phone = document.getElementById('phoneFrame');
+            const btnText = document.getElementById('flipBtnText');
+            phone.classList.toggle('flipped');
+            
+            if (phone.classList.contains('flipped')) {
+                btnText.innerText = "SHOW FRONT DIALER";
+                triggerGlyphPulse();
+            } else {
+                btnText.innerText = "SHOW REAR GLYPH";
+            }
+        }
+
+        function triggerGlyphPulse() {
+            const leds = [document.getElementById('glyphCamRing1'), document.getElementById('glyphTopStrip'), document.getElementById('glyphCenterCoil')];
+            leds.forEach(led => {
+                if (led) {
+                    led.classList.add('active');
+                    setTimeout(() => led.classList.remove('active'), 250);
+                }
+            });
+        }
+
+        function triggerGlyphActiveState(active) {
+            const leds = [document.getElementById('glyphCamRing1'), document.getElementById('glyphTopStrip'), document.getElementById('glyphCenterCoil')];
+            const redDot = document.getElementById('glyphRedDot');
+
+            leds.forEach(led => {
+                if (led) {
+                    if (active) led.classList.add('active');
+                    else led.classList.remove('active');
+                }
+            });
+
+            if (redDot) {
+                if (active) redDot.classList.add('active');
+                else redDot.classList.remove('active');
+            }
+        }
+
+        function toggleGlyphSync() {
+            triggerGlyphPulse();
+            const pillText = document.getElementById('glyphStatusText');
+            if (pillText) {
+                pillText.innerText = "GLYPH SYNCED";
+                setTimeout(() => pillText.innerText = "GLYPH READY", 2000);
+            }
+        }
+
+        // --- Clock Interval ---
+        function updateClock() {
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const mins = now.getMinutes().toString().padStart(2, '0');
+            document.getElementById('clockTime').innerText = `${hours}:${mins}`;
+        }
+
+        // Audio Toggle
+        document.getElementById('btnToggleSound').addEventListener('click', () => {
+            isSoundEnabled = !isSoundEnabled;
+            const icon = document.getElementById('soundIcon');
+            if (isSoundEnabled) {
+                icon.className = "fa-solid fa-volume-high text-nothing-red";
+            } else {
+                icon.className = "fa-solid fa-volume-xmark text-gray-500";
+            }
+        });
+
+        document.getElementById('btnFlipPhone').addEventListener('click', flipPhone);
+
+        window.onload = function() {
+            updateClock();
+            setInterval(updateClock, 1000);
+            updateDialerDisplay();
+            renderRecents();
+            renderContacts();
+        };
+    </script>
+</body>
+</html>
