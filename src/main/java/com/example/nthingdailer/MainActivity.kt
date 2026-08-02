@@ -1,9 +1,11 @@
 package com.example.nthingdailer
 
 import android.Manifest
+import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,31 +15,24 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.RotateRight
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.RotateRight
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.nthingdailer.audio.AudioSynthHelper
 import com.example.nthingdailer.model.DialerViewModel
 import com.example.nthingdailer.ui.screens.FrontDialerScreen
+import com.example.nthingdailer.ui.screens.PermissionRationaleScreen
 import com.example.nthingdailer.ui.screens.RearGlyphScreen
 import com.example.nthingdailer.ui.theme.*
 import kotlinx.coroutines.delay
@@ -46,48 +41,151 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        // Permission result handled gracefully
+    ) { _ ->
+        // Permissions updated, UI will recompose via check
+    }
+
+    private val requestRoleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        // Role updated, UI will recompose via check
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Request telephony permissions on launch
-        val permissionsToRequest = arrayOf(
+        setContent {
+            NthingDailerTheme {
+                val context = LocalContext.current
+                val prefs = remember { context.getSharedPreferences("nthing_prefs", MODE_PRIVATE) }
+                
+                val hasContactPermission = remember {
+                    mutableStateOf(checkPermission(Manifest.permission.READ_CONTACTS))
+                }
+                val hasOverlayPermission = remember {
+                    mutableStateOf(android.provider.Settings.canDrawOverlays(context))
+                }
+                val isDefaultDialer = remember {
+                    mutableStateOf(isRoleHeld())
+                }
+                val userProceededWithoutRole = remember { 
+                    mutableStateOf(prefs.getBoolean("skipped_role", false)) 
+                }
+
+                // Periodic check for permissions/role
+                LaunchedEffect(Unit) {
+                    while(true) {
+                        hasContactPermission.value = checkPermission(Manifest.permission.READ_CONTACTS)
+                        hasOverlayPermission.value = android.provider.Settings.canDrawOverlays(context)
+                        isDefaultDialer.value = isRoleHeld()
+                        delay(1000)
+                    }
+                }
+
+                if (!hasContactPermission.value || !hasOverlayPermission.value || (!isDefaultDialer.value && !userProceededWithoutRole.value)) {
+                    PermissionRationaleScreen(
+                        isDefaultDialer = isDefaultDialer.value,
+                        hasContactPermission = hasContactPermission.value,
+                        hasOverlayPermission = hasOverlayPermission.value,
+                        onRequestRole = { requestDefaultDialerRole() },
+                        onRequestPermissions = { requestPermissions() },
+                        onRequestOverlay = { 
+                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                            startActivity(intent)
+                        },
+                        onContinue = { 
+                            prefs.edit { putBoolean("skipped_role", true) }
+                            userProceededWithoutRole.value = true 
+                        }
+                    )
+                } else {
+                    // Show emergency warning if overlay is somehow lost for active users
+                    if (!hasOverlayPermission.value) {
+                        AlertDialog(
+                            onDismissRequest = { },
+                            title = { Text("PERMISSION REQUIRED", style = NothingDotTextStyle) },
+                            text = { Text("The 'Display over other apps' permission is required for the call popup feature. Please enable it in settings.", style = NothingMonoTextStyle) },
+                            confirmButton = {
+                                Button(onClick = {
+                                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                                    startActivity(intent)
+                                }) {
+                                    Text("OPEN SETTINGS")
+                                }
+                            },
+                            containerColor = NothingSurface,
+                            titleContentColor = NothingRed,
+                            textContentColor = Color.White
+                        )
+                    }
+
+                    MainDialerApp(
+                        onStartRealCall = { number ->
+                            makeRealPhoneCall(number)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun checkPermission(permission: String): Boolean {
+        return try {
+            ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isRoleHeld(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val roleManager = getSystemService(RoleManager::class.java)
+                roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
+            } catch (e: Exception) {
+                false
+            }
+        } else {
+            true
+        }
+    }
+
+    private fun requestPermissions() {
+        val permissions = mutableListOf(
             Manifest.permission.CALL_PHONE,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.WRITE_CONTACTS,
             Manifest.permission.READ_CALL_LOG,
             Manifest.permission.READ_PHONE_STATE
-        ).filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }.toTypedArray()
-
-        if (permissionsToRequest.isNotEmpty()) {
-            requestPermissionLauncher.launch(permissionsToRequest)
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        requestPermissionLauncher.launch(permissions.toTypedArray())
+    }
 
-        setContent {
-            NthingDailerTheme {
-                MainDialerApp(
-                    onStartRealCall = { number ->
-                        makeRealPhoneCall(number)
-                    }
-                )
+    private fun requestDefaultDialerRole() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val roleManager = getSystemService(RoleManager::class.java)
+                val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                if (intent != null) {
+                    requestRoleLauncher.launch(intent)
+                }
+            } catch (e: Exception) {
+                // Ignore or log
             }
         }
     }
 
     private fun makeRealPhoneCall(number: String) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+        if (checkPermission(Manifest.permission.CALL_PHONE)) {
             val intent = Intent(Intent.ACTION_CALL).apply {
                 data = Uri.parse("tel:$number")
             }
             startActivity(intent)
         } else {
-            // Fallback to dialer if CALL_PHONE permission is not granted
             val intent = Intent(Intent.ACTION_DIAL).apply {
                 data = Uri.parse("tel:$number")
             }
@@ -100,7 +198,6 @@ class MainActivity : ComponentActivity() {
 fun MainDialerApp(onStartRealCall: (String) -> Unit) {
     val viewModel: DialerViewModel = viewModel()
     var isShowingRearGlyph by remember { mutableStateOf(false) }
-    var isSoundEnabled by remember { mutableStateOf(AudioSynthHelper.isSoundEnabled) }
     var isGlyphPulsing by remember { mutableStateOf(false) }
 
     LaunchedEffect(isGlyphPulsing) {
@@ -140,7 +237,7 @@ fun MainDialerApp(onStartRealCall: (String) -> Unit) {
                             .background(NothingRed)
                     )
                     Text(
-                        text = "NOTHING (R) DIALER",
+                        text = "NThing DIALER",
                         style = NothingDotTextStyle,
                         color = Color.White,
                         fontSize = 16.sp
@@ -165,54 +262,6 @@ fun MainDialerApp(onStartRealCall: (String) -> Unit) {
                     color = Color.Gray,
                     fontSize = 10.sp
                 )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Flip Button
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.1f))
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                        .clickable { isShowingRearGlyph = !isShowingRearGlyph }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.RotateRight,
-                        contentDescription = "Flip",
-                        tint = NothingRed,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = if (isShowingRearGlyph) "FRONT DIALER" else "REAR GLYPH",
-                        style = NothingMonoTextStyle,
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Sound Toggle Button
-                IconButton(
-                    onClick = {
-                        isSoundEnabled = !isSoundEnabled
-                        AudioSynthHelper.isSoundEnabled = isSoundEnabled
-                    },
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.1f))
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                ) {
-                    Icon(
-                        imageVector = if (isSoundEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                        contentDescription = "Sound",
-                        tint = if (isSoundEnabled) NothingRed else Color.Gray,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
             }
         }
 

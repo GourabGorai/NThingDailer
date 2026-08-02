@@ -1,12 +1,20 @@
 package com.example.nthingdailer.ui.screens
 
+import android.Manifest
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
+import android.os.Build
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -18,6 +26,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Backspace
@@ -26,6 +36,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -33,12 +44,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import android.app.role.RoleManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -111,21 +119,19 @@ fun FrontDialerScreen(
 
     LaunchedEffect(Unit) {
         viewModel.refreshData()
-        // Check for overlay permission
-        if (!Settings.canDrawOverlays(context)) {
-            Toast.makeText(context, "Please enable 'Draw over other apps' for the Nothing Popup", Toast.LENGTH_LONG).show()
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-            context.startActivity(intent)
-        }
     }
 
     // Active Call State
     var isCallActive by remember { mutableStateOf(false) }
+    var isRecording by remember { mutableStateOf(false) }
+    var isKeypadVisible by remember { mutableStateOf(false) }
     
     // Sync local isCallActive with global state to handle external end-call
     LaunchedEffect(isGlobalCallActive) {
         if (!isGlobalCallActive) {
             isCallActive = false
+            isRecording = false
+            isKeypadVisible = false
         }
     }
 
@@ -138,11 +144,28 @@ fun FrontDialerScreen(
 
     // Clock
     var currentTime by remember { mutableStateOf("") }
+    
+    // System Status
+    var batteryLevel by remember { mutableIntStateOf(88) }
+    var isWifiEnabled by remember { mutableStateOf(true) }
+
     LaunchedEffect(Unit) {
-        val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
         while (true) {
+            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
             currentTime = sdf.format(Date())
-            delay(1000)
+            
+            // Update Battery
+            batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            
+            // Update WiFi
+            val activeNetwork = connectivityManager.activeNetwork
+            val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
+            isWifiEnabled = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ?: false
+            
+            delay(5000)
         }
     }
 
@@ -257,7 +280,7 @@ fun FrontDialerScreen(
                         )
                     }
 
-                    // Battery / Signal / Wifi mock
+                    // Battery / Signal / Wifi
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -268,14 +291,16 @@ fun FrontDialerScreen(
                             tint = Color.White,
                             modifier = Modifier.size(12.dp)
                         )
-                        Icon(
-                            imageVector = Icons.Default.Wifi,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
+                        if (isWifiEnabled) {
+                            Icon(
+                                imageVector = Icons.Default.Wifi,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
                         Text(
-                            text = "88%",
+                            text = "$batteryLevel%",
                             style = NothingDotTextStyle,
                             color = Color.White,
                             fontSize = 11.sp
@@ -329,29 +354,44 @@ fun FrontDialerScreen(
                             onRefresh = { viewModel.refreshData() }
                         )
 
-                        DialerTab.SETTINGS -> SettingsView(
-                            isDefault = isDefaultDialer(),
-                            onSetDefault = {
-                                try {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                        val roleManager = context.getSystemService(RoleManager::class.java)
-                                        if (roleManager?.isRoleAvailable(RoleManager.ROLE_DIALER) == true) {
-                                            val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                                            roleLauncher.launch(intent)
-                                        } else {
-                                            Toast.makeText(context, "Dialer role not available on this device", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } else {
-                                        val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
-                                            putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
-                                        }
+                        DialerTab.SETTINGS -> {
+                    val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+                    LaunchedEffect(Unit) {
+                        while(true) {
+                            hasOverlayPermission.value = Settings.canDrawOverlays(context)
+                            delay(2000)
+                        }
+                    }
+                    
+                    SettingsView(
+                        isDefault = isDefaultDialer(),
+                        hasOverlay = hasOverlayPermission.value,
+                        onSetDefault = {
+                            try {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val roleManager = context.getSystemService(RoleManager::class.java)
+                                    if (roleManager?.isRoleAvailable(RoleManager.ROLE_DIALER) == true) {
+                                        val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
                                         roleLauncher.launch(intent)
+                                    } else {
+                                        Toast.makeText(context, "Dialer role not available on this device", Toast.LENGTH_SHORT).show()
                                     }
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                } else {
+                                    val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
+                                        putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+                                    }
+                                    roleLauncher.launch(intent)
                                 }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                             }
-                        )
+                        },
+                        onRequestOverlay = {
+                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
+                            context.startActivity(intent)
+                        }
+                    )
+                }
                     }
                 }
 
@@ -408,8 +448,12 @@ fun FrontDialerScreen(
                     callSeconds = callSeconds,
                     isMuted = isMuted,
                     isSpeaker = isSpeaker,
+                    isRecording = isRecording,
+                    isKeypadVisible = isKeypadVisible,
                     onToggleMute = { isMuted = !isMuted },
                     onToggleSpeaker = { isSpeaker = !isSpeaker },
+                    onToggleRecording = { isRecording = !isRecording },
+                    onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
                     onGlyphSync = { onTriggerGlyphPulse() },
                     onEndCall = { endCall() }
                 )
@@ -957,12 +1001,15 @@ fun RecentsView(
 @Composable
 fun SettingsView(
     isDefault: Boolean,
-    onSetDefault: () -> Unit
+    hasOverlay: Boolean,
+    onSetDefault: () -> Unit,
+    onRequestOverlay: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
+            .verticalScroll(rememberScrollState())
     ) {
         Text(
             text = "SETTINGS",
@@ -1004,6 +1051,52 @@ fun SettingsView(
                 onCheckedChange = { if (!isDefault) onSetDefault() }
             )
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Overlay Permission Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(NothingButtonGlass)
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                .clickable { if (!hasOverlay) onRequestOverlay() }
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "OVERLAY POPUP",
+                    style = NothingDotTextStyle,
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = if (hasOverlay) "POPUP IS ENABLED" else "ENABLE CALL POPUP",
+                    style = NothingMonoTextStyle,
+                    color = if (hasOverlay) Color.Green else NothingLightGray,
+                    fontSize = 10.sp
+                )
+            }
+
+            NothingToggle(
+                checked = hasOverlay,
+                onCheckedChange = { if (!hasOverlay) onRequestOverlay() }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text(
+            text = "TIP: You can drag the call popup directly to move it to your preferred position.",
+            style = NothingMonoTextStyle,
+            color = Color.Gray,
+            fontSize = 9.sp,
+            lineHeight = 14.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 
@@ -1218,6 +1311,63 @@ fun ContactsView(
 }
 
 @Composable
+fun InCallKeypad(onKeyPress: (Char) -> Unit) {
+    val keys = listOf(
+        Pair('1', ""), Pair('2', "ABC"), Pair('3', "DEF"),
+        Pair('4', "GHI"), Pair('5', "JKL"), Pair('6', "MNO"),
+        Pair('7', "PQRS"), Pair('8', "TUV"), Pair('9', "WXYZ"),
+        Pair('*', ""), Pair('0', "+"), Pair('#', "")
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        keys.chunked(3).forEach { rowKeys ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowKeys.forEach { (charKey, subText) ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                AudioSynthHelper.playKeyTone(charKey)
+                                onKeyPress(charKey)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = charKey.toString(),
+                                style = NothingDotTextStyle,
+                                color = Color.White,
+                                fontSize = 18.sp
+                            )
+                            if (subText.isNotEmpty()) {
+                                Text(
+                                    text = subText,
+                                    style = NothingMonoTextStyle,
+                                    color = Color.Gray,
+                                    fontSize = 7.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ActiveCallOverlay(
     name: String,
     number: String,
@@ -1225,8 +1375,12 @@ fun ActiveCallOverlay(
     callSeconds: Int,
     isMuted: Boolean,
     isSpeaker: Boolean,
+    isRecording: Boolean,
+    isKeypadVisible: Boolean,
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
+    onToggleRecording: () -> Unit,
+    onToggleKeypad: () -> Unit,
     onGlyphSync: () -> Unit,
     onEndCall: () -> Unit
 ) {
@@ -1290,87 +1444,128 @@ fun ActiveCallOverlay(
                     color = Color.White,
                     fontSize = 28.sp
                 )
-            }
 
-            // Concentric Audio Wave Visualizer Ring & Contact Info
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(170.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Outer Ring 3
-                    Box(
-                        modifier = Modifier
-                            .size(170.dp)
-                            .scale(scale1)
-                            .clip(CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
+                if (isRecording) {
+                    val recordingAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.4f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800),
+                            repeatMode = RepeatMode.Reverse
+                        ), label = "recordingPulse"
                     )
-                    // Ring 2
-                    Box(
-                        modifier = Modifier
-                            .size(140.dp)
-                            .clip(CircleShape)
-                            .border(1.dp, NothingRed.copy(alpha = 0.3f), CircleShape)
-                    )
-                    // Ring 1
-                    Box(
-                        modifier = Modifier
-                            .size(110.dp)
-                            .clip(CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
-                    )
-
-                    // Avatar Circle
-                    Box(
-                        modifier = Modifier
-                            .size(90.dp)
-                            .clip(CircleShape)
-                            .background(NothingSurface)
-                            .border(2.dp, Color.White.copy(alpha = 0.25f), CircleShape),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(top = 4.dp).alpha(recordingAlpha)
                     ) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(NothingRed))
                         Text(
-                            text = name.take(1).uppercase(),
-                            style = NothingDotTextStyle,
-                            color = Color.White,
-                            fontSize = 32.sp
+                            text = "RECORDING",
+                            style = NothingMonoTextStyle,
+                            color = NothingRed,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            // Concentric Audio Wave Visualizer Ring & Contact Info
+            Crossfade(targetState = isKeypadVisible, label = "keypadFade") { showKeypad ->
+                if (showKeypad) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "TOUCH TONES",
+                            style = NothingMonoTextStyle,
+                            color = NothingRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        InCallKeypad(onKeyPress = { /* DTMF tones handled in helper */ })
+                    }
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .size(170.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Outer Ring 3
+                            Box(
+                                modifier = Modifier
+                                    .size(170.dp)
+                                    .scale(scale1)
+                                    .clip(CircleShape)
+                                    .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
+                            )
+                            // Ring 2
+                            Box(
+                                modifier = Modifier
+                                    .size(140.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, NothingRed.copy(alpha = 0.3f), CircleShape)
+                            )
+                            // Ring 1
+                            Box(
+                                modifier = Modifier
+                                    .size(110.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                            )
 
-                Text(
-                    text = name.uppercase(),
-                    style = NothingDotTextStyle,
-                    color = Color.White,
-                    fontSize = 22.sp
-                )
+                            // Avatar Circle
+                            Box(
+                                modifier = Modifier
+                                    .size(90.dp)
+                                    .clip(CircleShape)
+                                    .background(NothingSurface)
+                                    .border(2.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = name.take(1).uppercase(),
+                                    style = NothingDotTextStyle,
+                                    color = Color.White,
+                                    fontSize = 32.sp
+                                )
+                            }
+                        }
 
-                Text(
-                    text = number,
-                    style = NothingMonoTextStyle,
-                    color = NothingLightGray,
-                    fontSize = 12.sp
-                )
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = name.uppercase(),
+                            style = NothingDotTextStyle,
+                            color = Color.White,
+                            fontSize = 22.sp
+                        )
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(NothingRed.copy(alpha = 0.15f))
-                        .border(1.dp, NothingRed.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = "LONDON, UK • 5G",
-                        style = NothingMonoTextStyle,
-                        color = NothingRed,
-                        fontSize = 10.sp
-                    )
+                        Text(
+                            text = number,
+                            style = NothingMonoTextStyle,
+                            color = NothingLightGray,
+                            fontSize = 12.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(NothingRed.copy(alpha = 0.15f))
+                                .border(1.dp, NothingRed.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "LONDON, UK • 5G",
+                                style = NothingMonoTextStyle,
+                                color = NothingRed,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1394,9 +1589,9 @@ fun ActiveCallOverlay(
                         InCallControlButton(
                             icon = Icons.Default.Dialpad,
                             label = "KEYPAD",
-                            selected = false,
+                            selected = isKeypadVisible,
                             modifier = Modifier.weight(1f),
-                            onClick = { Toast.makeText(context, "In-Call DTMF Pad Active", Toast.LENGTH_SHORT).show() }
+                            onClick = onToggleKeypad
                         )
                         InCallControlButton(
                             icon = Icons.Default.VolumeUp,
@@ -1416,7 +1611,7 @@ fun ActiveCallOverlay(
                             label = "ADD CALL",
                             selected = false,
                             modifier = Modifier.weight(1f),
-                            onClick = { Toast.makeText(context, "Add Call Option", Toast.LENGTH_SHORT).show() }
+                            onClick = { Toast.makeText(context, "Contact List Simulation", Toast.LENGTH_SHORT).show() }
                         )
                         InCallControlButton(
                             icon = Icons.Default.Bolt,
@@ -1428,9 +1623,9 @@ fun ActiveCallOverlay(
                         InCallControlButton(
                             icon = Icons.Default.RadioButtonChecked,
                             label = "RECORD",
-                            selected = false,
+                            selected = isRecording,
                             modifier = Modifier.weight(1f),
-                            onClick = { Toast.makeText(context, "Call Recording Started", Toast.LENGTH_SHORT).show() }
+                            onClick = onToggleRecording
                         )
                     }
                 }
