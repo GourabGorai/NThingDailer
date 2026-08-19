@@ -1,5 +1,6 @@
 package com.example.nthingdailer
 
+import android.content.Intent
 import android.telecom.Call
 import android.telecom.InCallService
 
@@ -24,6 +25,7 @@ class NothingInCallService : InCallService() {
             if (state == Call.STATE_DISCONNECTED) {
                 CallStateManager.updateCallState(false)
                 currentCall = null
+                stopOverlay()
             }
         }
     }
@@ -36,6 +38,9 @@ class NothingInCallService : InCallService() {
         // Extract number if available
         val number = call.details.handle?.schemeSpecificPart
         CallStateManager.updateCallState(true, null, number)
+        
+        // Show overlay in case user backgrounds the app
+        startOverlay(number)
     }
 
     override fun onCallRemoved(call: Call) {
@@ -44,6 +49,26 @@ class NothingInCallService : InCallService() {
         if (currentCall == call) {
             currentCall = null
             CallStateManager.updateCallState(false)
+            stopOverlay()
         }
+    }
+
+    private fun startOverlay(number: String?) {
+        val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
+        if (!prefs.getBoolean("is_overlay_enabled", true)) return
+
+        val intent = Intent(this, CallOverlayService::class.java).apply {
+            putExtra("number", number)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopOverlay() {
+        val intent = Intent(this, CallOverlayService::class.java)
+        stopService(intent)
     }
 }

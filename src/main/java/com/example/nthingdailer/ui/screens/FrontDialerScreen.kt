@@ -1058,6 +1058,17 @@ fun SettingsView(
     onRequestOverlay: () -> Unit,
     onToggleOverlay: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
+    val isBatteryOptimized = remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        while(true) {
+            isBatteryOptimized.value = !pm.isIgnoringBatteryOptimizations(context.packageName)
+            delay(3000)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1124,14 +1135,14 @@ fun SettingsView(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "OVERLAY POPUP",
+                    text = "UNIVERSAL CALL POPUP",
                     style = NothingDotTextStyle,
                     color = Color.White,
                     fontSize = 14.sp
                 )
                 Text(
-                    text = if (!hasOverlay) "ENABLE CALL POPUP" 
-                           else if (isOverlayEnabled) "POPUP IS ENABLED" 
+                    text = if (!hasOverlay) "ENABLE OVERLAY POPUP" 
+                           else if (isOverlayEnabled) "ACTIVE FOR ALL DIALERS" 
                            else "POPUP IS DISABLED",
                     style = NothingMonoTextStyle,
                     color = if (hasOverlay && isOverlayEnabled) Color.Green else NothingLightGray,
@@ -1145,6 +1156,46 @@ fun SettingsView(
                     if (!hasOverlay) onRequestOverlay() 
                     else onToggleOverlay(!isOverlayEnabled)
                 }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Battery Optimization Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(NothingButtonGlass)
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                .clickable { 
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri())
+                    context.startActivity(intent)
+                }
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "STABLE BACKGROUND",
+                    style = NothingDotTextStyle,
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = if (isBatteryOptimized.value) "TAP TO FIX POPUP RELIABILITY" else "OPTIMIZED FOR STABILITY",
+                    style = NothingMonoTextStyle,
+                    color = if (!isBatteryOptimized.value) Color.Green else NothingRed,
+                    fontSize = 10.sp
+                )
+            }
+
+            Icon(
+                imageVector = if (!isBatteryOptimized.value) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = if (!isBatteryOptimized.value) Color.Green else NothingRed,
+                modifier = Modifier.size(24.dp)
             )
         }
 

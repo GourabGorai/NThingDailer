@@ -35,9 +35,13 @@ import com.example.nthingdailer.ui.screens.FrontDialerScreen
 import com.example.nthingdailer.ui.screens.PermissionRationaleScreen
 import com.example.nthingdailer.ui.screens.RearGlyphScreen
 import com.example.nthingdailer.ui.theme.*
+import android.content.IntentFilter
+import android.telephony.TelephonyManager
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+
+    private val callStateReceiver = CallStateReceiver()
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -54,6 +58,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val filter = IntentFilter().apply {
+            addAction(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+            addAction(Intent.ACTION_NEW_OUTGOING_CALL)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(callStateReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(callStateReceiver, filter)
+        }
 
         setContent {
             NthingDailerTheme {
@@ -130,6 +144,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(callStateReceiver)
+        } catch (e: Exception) {
+            // Already unregistered
+        }
+    }
+
     private fun checkPermission(permission: String): Boolean {
         return try {
             ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
@@ -157,7 +180,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.WRITE_CONTACTS,
             Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_PHONE_STATE
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.PROCESS_OUTGOING_CALLS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
