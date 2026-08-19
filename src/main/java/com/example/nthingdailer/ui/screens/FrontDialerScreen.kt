@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -125,22 +126,33 @@ fun FrontDialerScreen(
     var isCallActive by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var isKeypadVisible by remember { mutableStateOf(false) }
+
+    var callStatusHeading by remember { mutableStateOf("DIALING...") }
+    var callSeconds by remember { mutableIntStateOf(0) }
+    var activeCallStartTime by remember { mutableLongStateOf(0L) }
+    var activeCallName by remember { mutableStateOf("UNKNOWN") }
+    var activeCallNumber by remember { mutableStateOf("") }
+    var isMuted by remember { mutableStateOf(false) }
+    var isSpeaker by remember { mutableStateOf(false) }
     
     // Sync local isCallActive with global state to handle external end-call
     LaunchedEffect(isGlobalCallActive) {
         if (!isGlobalCallActive) {
+            if (isRecording && activeCallNumber.isNotEmpty()) {
+                val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+                val recordingId = "rec_${activeCallNumber}_${activeCallStartTime}"
+                prefs.edit {
+                    putString(recordingId, "internal_storage/recordings/call_rec.mp3")
+                    val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
+                    val updated = existing.toMutableSet().apply { add(recordingId) }
+                    putStringSet("all_recordings", updated)
+                }
+            }
             isCallActive = false
             isRecording = false
             isKeypadVisible = false
         }
     }
-
-    var callStatusHeading by remember { mutableStateOf("DIALING...") }
-    var callSeconds by remember { mutableStateOf(0) }
-    var activeCallName by remember { mutableStateOf("UNKNOWN") }
-    var activeCallNumber by remember { mutableStateOf("") }
-    var isMuted by remember { mutableStateOf(false) }
-    var isSpeaker by remember { mutableStateOf(false) }
 
     // Clock
     var currentTime by remember { mutableStateOf("") }
@@ -191,6 +203,7 @@ fun FrontDialerScreen(
 
         activeCallNumber = numToCall
         activeCallName = nameToCall
+        activeCallStartTime = System.currentTimeMillis()
         
         // ONLY show the internal in-call UI if we are the default dialer
         if (isDefaultDialer()) {
@@ -356,6 +369,9 @@ fun FrontDialerScreen(
 
                         DialerTab.SETTINGS -> {
                     val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+                    val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
+                    val isOverlayEnabled = remember { mutableStateOf(prefs.getBoolean("is_overlay_enabled", true)) }
+
                     LaunchedEffect(Unit) {
                         while(true) {
                             hasOverlayPermission.value = Settings.canDrawOverlays(context)
@@ -366,6 +382,7 @@ fun FrontDialerScreen(
                     SettingsView(
                         isDefault = isDefaultDialer(),
                         hasOverlay = hasOverlayPermission.value,
+                        isOverlayEnabled = isOverlayEnabled.value,
                         onSetDefault = {
                             try {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -389,6 +406,10 @@ fun FrontDialerScreen(
                         onRequestOverlay = {
                             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
                             context.startActivity(intent)
+                        },
+                        onToggleOverlay = { enabled ->
+                            isOverlayEnabled.value = enabled
+                            prefs.edit { putBoolean("is_overlay_enabled", enabled) }
                         }
                     )
                 }
@@ -921,15 +942,17 @@ fun RecentsView(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(72.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(NothingButtonGlass)
                             .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
                             .clickable { onCallItem(recent) }
-                            .padding(12.dp),
+                            .padding(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -949,12 +972,14 @@ fun RecentsView(
                                 )
                             }
 
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = recent.name.uppercase(),
                                     style = NothingDotTextStyle,
                                     color = if (recent.missed) NothingRed else Color.White,
-                                    fontSize = 14.sp
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -970,13 +995,39 @@ fun RecentsView(
                                         text = recent.number,
                                         style = NothingMonoTextStyle,
                                         color = NothingLightGray,
-                                        fontSize = 10.sp
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                }
+                                if (recent.recordingPath != null) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(top = 2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.RadioButtonChecked,
+                                            contentDescription = "Recorded",
+                                            tint = NothingRed,
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                        Text(
+                                            text = "RECORDED",
+                                            style = NothingMonoTextStyle,
+                                            color = NothingRed,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
 
-                        Column(horizontalAlignment = Alignment.End) {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
                             Text(
                                 text = recent.time,
                                 style = NothingMonoTextStyle,
@@ -1002,8 +1053,10 @@ fun RecentsView(
 fun SettingsView(
     isDefault: Boolean,
     hasOverlay: Boolean,
+    isOverlayEnabled: Boolean,
     onSetDefault: () -> Unit,
-    onRequestOverlay: () -> Unit
+    onRequestOverlay: () -> Unit,
+    onToggleOverlay: (Boolean) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1061,7 +1114,10 @@ fun SettingsView(
                 .clip(RoundedCornerShape(16.dp))
                 .background(NothingButtonGlass)
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                .clickable { if (!hasOverlay) onRequestOverlay() }
+                .clickable { 
+                    if (!hasOverlay) onRequestOverlay() 
+                    else onToggleOverlay(!isOverlayEnabled)
+                }
                 .padding(20.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -1074,16 +1130,21 @@ fun SettingsView(
                     fontSize = 14.sp
                 )
                 Text(
-                    text = if (hasOverlay) "POPUP IS ENABLED" else "ENABLE CALL POPUP",
+                    text = if (!hasOverlay) "ENABLE CALL POPUP" 
+                           else if (isOverlayEnabled) "POPUP IS ENABLED" 
+                           else "POPUP IS DISABLED",
                     style = NothingMonoTextStyle,
-                    color = if (hasOverlay) Color.Green else NothingLightGray,
+                    color = if (hasOverlay && isOverlayEnabled) Color.Green else NothingLightGray,
                     fontSize = 10.sp
                 )
             }
 
             NothingToggle(
-                checked = hasOverlay,
-                onCheckedChange = { if (!hasOverlay) onRequestOverlay() }
+                checked = hasOverlay && isOverlayEnabled,
+                onCheckedChange = { 
+                    if (!hasOverlay) onRequestOverlay() 
+                    else onToggleOverlay(!isOverlayEnabled)
+                }
             )
         }
 
@@ -1234,15 +1295,17 @@ fun ContactsView(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(68.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(NothingButtonGlass)
                             .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
                             .clickable { onCallItem(contact) }
-                            .padding(12.dp),
+                            .padding(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -1262,13 +1325,16 @@ fun ContactsView(
                                 )
                             }
 
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
                                         text = contact.name.uppercase(),
                                         style = NothingDotTextStyle,
                                         color = Color.White,
-                                        fontSize = 14.sp
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
                                     if (contact.favorite) {
                                         Icon(
@@ -1283,7 +1349,9 @@ fun ContactsView(
                                     text = "${contact.number} • ${contact.type}",
                                     style = NothingMonoTextStyle,
                                     color = NothingLightGray,
-                                    fontSize = 10.sp
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1677,15 +1745,21 @@ fun InCallControlButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            val tint = when {
+                label == "GLYPH SYNC" -> NothingRed
+                label == "RECORD" && selected -> NothingRed
+                selected -> Color.White
+                else -> NothingLightGray
+            }
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (label == "GLYPH SYNC") NothingRed else if (selected) Color.White else NothingLightGray,
+                tint = tint,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = label,
+                text = if (label == "RECORD" && selected) "RECORDING" else label,
                 style = NothingMonoTextStyle,
                 color = if (selected) Color.White else NothingLightGray,
                 fontSize = 9.sp

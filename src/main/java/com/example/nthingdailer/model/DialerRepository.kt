@@ -82,6 +82,9 @@ class DialerRepository(private val context: Context) {
             val dateIndex = cursor.getColumnIndex(CallLog.Calls.DATE)
             val durationIndex = cursor.getColumnIndex(CallLog.Calls.DURATION)
 
+            val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+            val allRecordingIds = prefs.getStringSet("all_recordings", emptySet()) ?: emptySet()
+
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIndex)
                 val name = cursor.getString(nameIndex) ?: "Unknown"
@@ -89,6 +92,19 @@ class DialerRepository(private val context: Context) {
                 val typeInt = cursor.getInt(typeIndex)
                 val dateLong = cursor.getLong(dateIndex)
                 val durationSeconds = cursor.getLong(durationIndex)
+
+                // Look for associated recording
+                var recordingPath: String? = null
+                // We check for recordings within a 10-second window of the call log entry
+                for (recId in allRecordingIds) {
+                    if (recId.startsWith("rec_$number")) {
+                        val recTime = recId.substringAfterLast("_").toLongOrNull() ?: 0L
+                        if (kotlin.math.abs(recTime - dateLong) < 10000) {
+                            recordingPath = prefs.getString(recId, null)
+                            break
+                        }
+                    }
+                }
 
                 val type = when (typeInt) {
                     CallLog.Calls.INCOMING_TYPE -> "incoming"
@@ -108,7 +124,8 @@ class DialerRepository(private val context: Context) {
                         type = type,
                         time = timeLabel,
                         duration = duration,
-                        missed = typeInt == CallLog.Calls.MISSED_TYPE
+                        missed = typeInt == CallLog.Calls.MISSED_TYPE,
+                        recordingPath = recordingPath
                     )
                 )
             }

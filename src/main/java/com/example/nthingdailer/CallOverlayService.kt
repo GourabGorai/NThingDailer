@@ -42,6 +42,10 @@ class CallOverlayService : Service() {
     private var initialTouchX: Float = 0f
     private var initialTouchY: Float = 0f
 
+    private var isRecording: Boolean = false
+    private var currentNumber: String? = null
+    private var callStartTime: Long = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -52,6 +56,9 @@ class CallOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val number = intent?.getStringExtra("number")
         val name = intent?.getStringExtra("name")
+        
+        currentNumber = number
+        callStartTime = System.currentTimeMillis()
         
         // Show foreground notification immediately to satisfy system
         val notification = createNotification(name ?: number ?: "Active Call")
@@ -100,7 +107,11 @@ class CallOverlayService : Service() {
         try {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
             
-            val container = LinearLayout(this).apply {
+            val container = object : LinearLayout(this) {
+                override fun performClick(): Boolean {
+                    return super.performClick()
+                }
+            }.apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(60, 30, 60, 30)
                 val bg = GradientDrawable().apply {
@@ -140,9 +151,47 @@ class CallOverlayService : Service() {
                 setPadding(0, 4, 0, 0)
             }
 
+            val recordBtn = TextView(this).apply {
+                text = "RECORD"
+                setTextColor(0xFFFFFFFF.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                typeface = Typeface.MONOSPACE
+                gravity = Gravity.CENTER
+                setPadding(30, 12, 30, 12)
+                val btnBg = GradientDrawable().apply {
+                    setColor(0x15FFFFFF)
+                    cornerRadius = 24f
+                    setStroke(1, 0x30FFFFFF)
+                }
+                background = btnBg
+                
+                val layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 30
+                    gravity = Gravity.CENTER_HORIZONTAL
+                }
+                this.layoutParams = layoutParams
+                
+                setOnClickListener {
+                    isRecording = !isRecording
+                    if (isRecording) {
+                        text = "RECORDING..."
+                        setTextColor(0xFFE5272C.toInt()) // Red
+                        (background as GradientDrawable).setStroke(2, 0xFFE5272C.toInt())
+                    } else {
+                        text = "RECORD"
+                        setTextColor(0xFFFFFFFF.toInt())
+                        (background as GradientDrawable).setStroke(1, 0x30FFFFFF)
+                    }
+                }
+            }
+
             container.addView(titleText)
             container.addView(infoText)
             container.addView(numberText)
+            container.addView(recordBtn)
             overlayView = container
 
             updateOverlayText(number, name)
@@ -167,28 +216,43 @@ class CallOverlayService : Service() {
                 y = prefs.getInt("popup_y_offset", 150)
             }
 
-            container.setOnTouchListener { _, event ->
+            container.setOnTouchListener { v, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         initialX = params.x
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
-                        true
+                        // Don't consume yet to allow button clicks
+                        false
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        params.x = initialX + (event.rawX - initialTouchX).toInt()
-                        params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager?.updateViewLayout(overlayView, params)
-                        true
+                        // Only start moving if we've dragged a bit
+                        val diffX = Math.abs(event.rawX - initialTouchX)
+                        val diffY = Math.abs(event.rawY - initialTouchY)
+                        if (diffX > 10 || diffY > 10) {
+                            params.x = initialX + (event.rawX - initialTouchX).toInt()
+                            params.y = initialY + (event.rawY - initialTouchY).toInt()
+                            windowManager?.updateViewLayout(overlayView, params)
+                            true
+                        } else {
+                            false
+                        }
                     }
                     MotionEvent.ACTION_UP -> {
-                        val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
-                        prefs.edit {
-                            putInt("popup_x_offset", params.x)
-                            putInt("popup_y_offset", params.y)
+                        val diffX = Math.abs(event.rawX - initialTouchX)
+                        val diffY = Math.abs(event.rawY - initialTouchY)
+                        if (diffX > 10 || diffY > 10) {
+                            val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
+                            prefs.edit {
+                                putInt("popup_x_offset", params.x)
+                                putInt("popup_y_offset", params.y)
+                            }
+                            true
+                        } else {
+                            v.performClick()
+                            false
                         }
-                        true
                     }
                     else -> false
                 }
@@ -259,6 +323,22 @@ class CallOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        
+        if (isRecording && currentNumber != null) {
+            val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
+            // Use number + approx time as key (CallLog.DATE is a timestamp)
+            // Note: System call log date might be slightly off from our System.currentTimeMillis()
+            // but we can store it and look for matches within a range or just store it.
+            val recordingId = "rec_${currentNumber}_${callStartTime}"
+            prefs.edit {
+                putString(recordingId, "internal_storage/recordings/call_rec.mp3")
+                // Also store a list of all recorded IDs to easily fetch them
+                val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
+                val updated = existing.toMutableSet().apply { add(recordingId) }
+                putStringSet("all_recordings", updated)
+            }
+        }
+
         if (overlayView != null) {
             windowManager?.removeView(overlayView)
             overlayView = null

@@ -16,7 +16,8 @@ data class RecentItem(
     val type: String, // "incoming", "outgoing", "missed"
     val time: String,
     val duration: String,
-    val missed: Boolean
+    val missed: Boolean,
+    val recordingPath: String? = null
 )
 
 object SampleData {

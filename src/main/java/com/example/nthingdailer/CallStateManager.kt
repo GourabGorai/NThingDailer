@@ -13,6 +13,9 @@ object CallStateManager {
     private val _lastCallNumber = MutableStateFlow<String?>(null)
     val lastCallNumber = _lastCallNumber.asStateFlow()
 
+    private val _lastCallStartTime = MutableStateFlow(0L)
+    val lastCallStartTime = _lastCallStartTime.asStateFlow()
+
     private val _triggerAcknowledgement = MutableStateFlow(false)
     val triggerAcknowledgement = _triggerAcknowledgement.asStateFlow()
 
@@ -24,6 +27,7 @@ object CallStateManager {
         if (active) {
             name?.let { _lastCallName.value = it }
             number?.let { _lastCallNumber.value = it }
+            _lastCallStartTime.value = System.currentTimeMillis()
         }
     }
 

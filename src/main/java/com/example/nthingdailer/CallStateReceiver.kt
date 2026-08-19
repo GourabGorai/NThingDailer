@@ -21,10 +21,13 @@ class CallStateReceiver : BroadcastReceiver() {
 
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING, TelephonyManager.EXTRA_STATE_OFFHOOK -> {
-                    if (Settings.canDrawOverlays(context)) {
+                    val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+                    val isOverlayEnabled = prefs.getBoolean("is_overlay_enabled", true)
+                    
+                    if (isOverlayEnabled && Settings.canDrawOverlays(context)) {
                         startOverlayService(context, incomingNumber)
-                    } else {
-                        // Diagnostic toast if permission is missing
+                    } else if (isOverlayEnabled) {
+                        // Diagnostic toast if permission is missing but feature enabled
                         Toast.makeText(context, "Nothing Dialer: Grant 'Display over other apps' to see call popup", Toast.LENGTH_LONG).show()
                     }
                 }
