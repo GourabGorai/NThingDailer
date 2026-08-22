@@ -11,6 +11,8 @@ import android.os.Build
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.telecom.TelecomManager
+import android.telecom.Call
+import android.telecom.VideoProfile
 import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -91,9 +94,11 @@ fun FrontDialerScreen(
     val t9Matches by viewModel.t9Matches.collectAsState()
     
     val triggerAcknowledgement by CallStateManager.triggerAcknowledgement.collectAsState()
-    val lastCallName by CallStateManager.lastCallName.collectAsState()
-    val lastCallNumber by CallStateManager.lastCallNumber.collectAsState()
     val isGlobalCallActive by CallStateManager.isCallActive.collectAsState()
+    val currentCallState by CallStateManager.callState.collectAsState()
+    
+    val lastCallNameFlow by CallStateManager.lastCallName.collectAsState()
+    val lastCallNumberFlow by CallStateManager.lastCallNumber.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -136,8 +141,13 @@ fun FrontDialerScreen(
     var isSpeaker by remember { mutableStateOf(false) }
     
     // Sync local isCallActive with global state to handle external end-call
-    LaunchedEffect(isGlobalCallActive) {
-        if (!isGlobalCallActive) {
+    LaunchedEffect(isGlobalCallActive, lastCallNameFlow, lastCallNumberFlow) {
+        if (isGlobalCallActive && isDefaultDialer()) {
+            activeCallNumber = lastCallNumberFlow ?: ""
+            activeCallName = lastCallNameFlow ?: "UNKNOWN"
+            activeCallStartTime = CallStateManager.lastCallStartTime.value
+            isCallActive = true
+        } else if (!isGlobalCallActive) {
             if (isRecording && activeCallNumber.isNotEmpty()) {
                 val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
                 val recordingId = "rec_${activeCallNumber}_${activeCallStartTime}"
@@ -182,17 +192,32 @@ fun FrontDialerScreen(
     }
 
     // Call Timer Effect
-    LaunchedEffect(isCallActive) {
+    LaunchedEffect(isCallActive, currentCallState) {
         if (isCallActive) {
-            callSeconds = 0
-            callStatusHeading = "DIALING..."
-            AudioSynthHelper.playCallStartTone()
-            delay(1800)
-            callStatusHeading = "CALL IN PROGRESS"
-            while (isCallActive) {
-                delay(1000)
-                callSeconds++
+            when (currentCallState) {
+                Call.STATE_ACTIVE -> {
+                    callStatusHeading = "CALL IN PROGRESS"
+                    // If it just became active, ensure it starts from zero
+                    // Note: In a real app, you might want to fetch call duration from system details
+                    while (isCallActive && currentCallState == Call.STATE_ACTIVE) {
+                        delay(1000)
+                        callSeconds++
+                    }
+                }
+                Call.STATE_RINGING -> {
+                    callSeconds = 0
+                    callStatusHeading = "INCOMING CALL..."
+                }
+                Call.STATE_DIALING, Call.STATE_CONNECTING -> {
+                    callSeconds = 0
+                    callStatusHeading = "DIALING..."
+                }
+                Call.STATE_DISCONNECTED -> {
+                    callStatusHeading = "CALL ENDED"
+                }
             }
+        } else {
+            callSeconds = 0
         }
     }
 
@@ -462,29 +487,42 @@ fun FrontDialerScreen(
 
             // ACTIVE CALL SCREEN OVERLAY
             if (isCallActive) {
-                ActiveCallOverlay(
-                    name = activeCallName,
-                    number = activeCallNumber,
-                    statusHeading = callStatusHeading,
-                    callSeconds = callSeconds,
-                    isMuted = isMuted,
-                    isSpeaker = isSpeaker,
-                    isRecording = isRecording,
-                    isKeypadVisible = isKeypadVisible,
-                    onToggleMute = { isMuted = !isMuted },
-                    onToggleSpeaker = { isSpeaker = !isSpeaker },
-                    onToggleRecording = { isRecording = !isRecording },
-                    onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
-                    onGlyphSync = { onTriggerGlyphPulse() },
-                    onEndCall = { endCall() }
-                )
+                if (currentCallState == Call.STATE_RINGING) {
+                    IncomingCallOverlay(
+                        name = activeCallName,
+                        number = activeCallNumber,
+                        onAnswer = { 
+                            com.example.nthingdailer.NothingInCallService.answerCurrentCall()
+                        },
+                        onReject = { 
+                            com.example.nthingdailer.NothingInCallService.disconnectCurrentCall()
+                        }
+                    )
+                } else {
+                    ActiveCallOverlay(
+                        name = activeCallName,
+                        number = activeCallNumber,
+                        statusHeading = callStatusHeading,
+                        callSeconds = callSeconds,
+                        isMuted = isMuted,
+                        isSpeaker = isSpeaker,
+                        isRecording = isRecording,
+                        isKeypadVisible = isKeypadVisible,
+                        onToggleMute = { isMuted = !isMuted },
+                        onToggleSpeaker = { isSpeaker = !isSpeaker },
+                        onToggleRecording = { isRecording = !isRecording },
+                        onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
+                        onGlyphSync = { onTriggerGlyphPulse() },
+                        onEndCall = { endCall() }
+                    )
+                }
             }
 
             // ACKNOWLEDGEMENT PAGE OVERLAY
             if (triggerAcknowledgement) {
                 AcknowledgementOverlay(
-                    name = lastCallName ?: "UNKNOWN",
-                    number = lastCallNumber ?: "",
+                    name = lastCallNameFlow ?: "UNKNOWN",
+                    number = lastCallNumberFlow ?: "",
                     onDismiss = {
                         isCallActive = false
                         CallStateManager.clearAcknowledgement()
@@ -1480,6 +1518,141 @@ fun InCallKeypad(onKeyPress: (Char) -> Unit) {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun IncomingCallOverlay(
+    name: String,
+    number: String,
+    onAnswer: () -> Unit,
+    onReject: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(24.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 40.dp)) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(NothingRed.copy(alpha = 0.1f))
+                        .border(1.dp, NothingRed.copy(alpha = 0.3f), CircleShape)
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "INCOMING CALL",
+                        style = NothingDotTextStyle,
+                        color = NothingRed,
+                        fontSize = 12.sp,
+                        letterSpacing = 2.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Text(
+                    text = name.uppercase(),
+                    style = NothingDotTextStyle,
+                    color = Color.White,
+                    fontSize = 32.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = number,
+                    style = NothingMonoTextStyle,
+                    color = NothingLightGray,
+                    fontSize = 16.sp
+                )
+            }
+
+            // Central Animated Icon
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(NothingSurface)
+                    .border(2.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Call,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(48.dp)
+                )
+            }
+
+            // Bottom Buttons
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 60.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Reject Button
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    IconButton(
+                        onClick = onReject,
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(NothingRed)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = "Reject",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "DECLINE",
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 10.sp
+                    )
+                }
+
+                // Answer Button
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    IconButton(
+                        onClick = onAnswer,
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = "Answer",
+                            tint = Color.Black,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "ANSWER",
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 10.sp
+                    )
                 }
             }
         }

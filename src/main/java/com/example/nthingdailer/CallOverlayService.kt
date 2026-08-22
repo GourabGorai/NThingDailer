@@ -64,9 +64,13 @@ class CallOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val number = intent?.getStringExtra("number")
         val name = intent?.getStringExtra("name")
+        val state = intent?.getIntExtra("state", android.telecom.Call.STATE_ACTIVE) ?: android.telecom.Call.STATE_ACTIVE
         
         currentNumber = number
         callStartTime = System.currentTimeMillis()
+        
+        // Update manager state
+        CallStateManager.updateCallState(true, name, number, state)
         
         // Update notification with caller info
         val notification = createNotification(name ?: number ?: "Active Call")
@@ -261,7 +265,6 @@ class CallOverlayService : Service() {
             }
 
             windowManager?.addView(overlayView, params)
-            CallStateManager.updateCallState(true, name, number)
             if ((name == null || name.isBlank()) && number != null) lookupContact(number)
             
             Toast.makeText(this, "Call Popup Ready", Toast.LENGTH_SHORT).show()
@@ -301,7 +304,8 @@ class CallOverlayService : Service() {
             withContext(Dispatchers.Main) {
                 if (foundName != null) {
                     updateOverlayText(number, foundName.uppercase())
-                    CallStateManager.updateCallState(true, foundName, number)
+                    val currentState = CallStateManager.callState.value
+                    CallStateManager.updateCallState(true, foundName, number, currentState)
                 }
             }
         }

@@ -3,6 +3,7 @@ package com.example.nthingdailer
 import android.content.Intent
 import android.telecom.Call
 import android.telecom.InCallService
+import android.telecom.VideoProfile
 
 /**
  * Required service for an app to be considered a valid Dialer by the Android system.
@@ -17,15 +18,22 @@ class NothingInCallService : InCallService() {
             currentCall?.disconnect()
             currentCall = null
         }
+
+        fun answerCurrentCall() {
+            currentCall?.answer(VideoProfile.STATE_AUDIO_ONLY)
+        }
     }
 
     private val callCallback = object : Call.Callback() {
         override fun onStateChanged(call: Call?, state: Int) {
             super.onStateChanged(call, state)
+            val number = call?.details?.handle?.schemeSpecificPart
             if (state == Call.STATE_DISCONNECTED) {
                 CallStateManager.updateCallState(false)
                 currentCall = null
                 stopOverlay()
+            } else {
+                CallStateManager.updateCallState(true, null, number, state)
             }
         }
     }
@@ -37,8 +45,14 @@ class NothingInCallService : InCallService() {
         
         // Extract number if available
         val number = call.details.handle?.schemeSpecificPart
-        CallStateManager.updateCallState(true, null, number)
+        CallStateManager.updateCallState(true, null, number, call.state)
         
+        // Bring app to foreground if we are default dialer
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        startActivity(intent)
+
         // Show overlay in case user backgrounds the app
         startOverlay(number)
     }
