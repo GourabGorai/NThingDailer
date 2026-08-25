@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import android.telephony.TelephonyManager
+import android.telecom.TelecomManager
 import android.widget.Toast
 import android.util.Log
 
@@ -15,6 +16,15 @@ class CallStateReceiver : BroadcastReceiver() {
         
         if (action == Intent.ACTION_BOOT_COMPLETED) {
             Log.d("NothingDialer", "Boot completed, background detection active")
+            return
+        }
+
+        // Only show popup if NOT the default dialer
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+        val isDefault = telecomManager.defaultDialerPackage == context.packageName
+        
+        if (isDefault) {
+            Log.d("NothingDialer", "App is default dialer, skipping popup")
             return
         }
 
@@ -55,15 +65,9 @@ class CallStateReceiver : BroadcastReceiver() {
 
     private fun startOverlayService(context: Context, number: String?, callState: Int) {
         val serviceIntent = Intent(context, CallOverlayService::class.java).apply {
-            putExtra("number", number ?: CallStateManager.lastCallNumber.value)
+            putExtra("number", number)
             putExtra("state", callState)
-            val lastNumber = CallStateManager.lastCallNumber.value
-            val lastName = CallStateManager.lastCallName.value
-            if (number != null && lastNumber != null && number == lastNumber) {
-                putExtra("name", lastName)
-            } else {
-                putExtra("name", null as String?)
-            }
+            // Removed stale data fallback to ensure current call details are shown
         }
         
         try {

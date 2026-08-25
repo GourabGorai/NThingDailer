@@ -104,6 +104,10 @@ fun FrontDialerScreen(
 
     var activeFilter by remember { mutableStateOf("all") } // "all" or "missed"
     var contactSearchQuery by remember { mutableStateOf("") }
+    
+    // History Overlay State
+    var historyNumberToShow by remember { mutableStateOf<String?>(null) }
+    var historyNameToShow by remember { mutableStateOf<String?>(null) }
 
     fun isDefaultDialer(): Boolean {
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
@@ -144,7 +148,7 @@ fun FrontDialerScreen(
     LaunchedEffect(isGlobalCallActive, lastCallNameFlow, lastCallNumberFlow) {
         if (isGlobalCallActive && isDefaultDialer()) {
             activeCallNumber = lastCallNumberFlow ?: ""
-            activeCallName = lastCallNameFlow ?: "UNKNOWN"
+            activeCallName = if (lastCallNameFlow.isNullOrBlank() || lastCallNameFlow.equals("Unknown", true)) "" else lastCallNameFlow!!
             activeCallStartTime = CallStateManager.lastCallStartTime.value
             isCallActive = true
         } else if (!isGlobalCallActive) {
@@ -381,6 +385,10 @@ fun FrontDialerScreen(
                             activeFilter = activeFilter,
                             onFilterChange = { activeFilter = it },
                             onCallItem = { rec -> startCall(rec.number, rec.name) },
+                            onSeeHistory = { num, name -> 
+                                historyNumberToShow = num
+                                historyNameToShow = name
+                            },
                             onRefresh = { viewModel.refreshData() }
                         )
 
@@ -389,6 +397,10 @@ fun FrontDialerScreen(
                             searchQuery = contactSearchQuery,
                             onSearchQueryChange = { contactSearchQuery = it },
                             onCallItem = { c -> startCall(c.number, c.name) },
+                            onSeeHistory = { num, name ->
+                                historyNumberToShow = num
+                                historyNameToShow = name
+                            },
                             onRefresh = { viewModel.refreshData() }
                         )
 
@@ -518,17 +530,132 @@ fun FrontDialerScreen(
                 }
             }
 
-            // ACKNOWLEDGEMENT PAGE OVERLAY
-            if (triggerAcknowledgement) {
-                AcknowledgementOverlay(
-                    name = lastCallNameFlow ?: "UNKNOWN",
-                    number = lastCallNumberFlow ?: "",
-                    onDismiss = {
-                        isCallActive = false
-                        CallStateManager.clearAcknowledgement()
-                        viewModel.refreshData()
-                    }
+            // HISTORY PAGE OVERLAY
+            if (historyNumberToShow != null) {
+                CallHistoryOverlay(
+                    name = historyNameToShow ?: "UNKNOWN",
+                    number = historyNumberToShow!!,
+                    recents = recentsList,
+                    onDismiss = { historyNumberToShow = null; historyNameToShow = null },
+                    onCall = { num -> startCall(num) }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun CallHistoryOverlay(
+    name: String,
+    number: String,
+    recents: List<RecentItem>,
+    onDismiss: () -> Unit,
+    onCall: (String) -> Unit
+) {
+    val filteredHistory = remember(recents, number) {
+        val cleanTarget = number.filter { it.isDigit() }
+        recents.filter { 
+            it.number.filter { c -> c.isDigit() } == cleanTarget ||
+            it.number.contains(number) || number.contains(it.number)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp, top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
+                
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (name.isNotBlank() && !name.equals("Unsaved", true)) name.uppercase() else "HISTORY",
+                        style = NothingDotTextStyle,
+                        color = Color.White,
+                        fontSize = 18.sp
+                    )
+                    Text(
+                        text = number,
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 11.sp
+                    )
+                }
+
+                IconButton(onClick = { onCall(number) }) {
+                    Icon(Icons.Default.Call, contentDescription = "Call", tint = Color.Green)
+                }
+            }
+
+            if (filteredHistory.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("NO CALL HISTORY", style = NothingMonoTextStyle, color = Color.Gray)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(filteredHistory) { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(NothingButtonGlass)
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Icon(
+                                    imageVector = if (item.missed) Icons.Default.CallReceived else if (item.type == "outgoing") Icons.Default.CallMade else Icons.Default.CallReceived,
+                                    contentDescription = null,
+                                    tint = if (item.missed) NothingRed else if (item.type == "outgoing") Color.Green else Color.Cyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = item.type.uppercase(),
+                                        style = NothingDotTextStyle,
+                                        color = if (item.missed) NothingRed else Color.White,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = item.time,
+                                        style = NothingMonoTextStyle,
+                                        color = NothingLightGray,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Text(
+                                text = item.duration,
+                                style = NothingMonoTextStyle,
+                                color = Color.Gray,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp).height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = NothingSurface),
+                shape = RoundedCornerShape(25.dp)
+            ) {
+                Text("CLOSE", style = NothingMonoTextStyle, color = Color.White)
             }
         }
     }
@@ -579,11 +706,22 @@ fun AcknowledgementOverlay(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = name.uppercase(),
+                text = if (name.isNotBlank() && !name.equals("Unknown", true)) name.uppercase() else number,
                 style = NothingMonoTextStyle,
                 color = NothingLightGray,
-                fontSize = 16.sp
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center
             )
+
+            if (name.isNotBlank() && !name.equals("Unknown", true) && number.isNotBlank() && number != name) {
+                Text(
+                    text = number,
+                    style = NothingMonoTextStyle,
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
 
             Text(
                 text = number,
@@ -890,8 +1028,10 @@ fun RecentsView(
     activeFilter: String,
     onFilterChange: (String) -> Unit,
     onCallItem: (RecentItem) -> Unit,
+    onSeeHistory: (String, String) -> Unit,
     onRefresh: () -> Unit
 ) {
+    val context = LocalContext.current
     val filteredRecents = remember(recents, activeFilter) {
         if (activeFilter == "missed") recents.filter { it.missed } else recents
     }
@@ -984,13 +1124,13 @@ fun RecentsView(
                             .clip(RoundedCornerShape(16.dp))
                             .background(NothingButtonGlass)
                             .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                            .clickable { onCallItem(recent) }
                             .padding(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f)
+                                .clickable { onSeeHistory(recent.number, recent.name) },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -1003,7 +1143,7 @@ fun RecentsView(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = recent.name.take(1).uppercase(),
+                                    text = if (recent.name.isBlank() || recent.name.equals("Unknown", true)) "?" else recent.name.take(1).uppercase(),
                                     style = NothingDotTextStyle,
                                     color = Color.White,
                                     fontSize = 16.sp
@@ -1012,7 +1152,7 @@ fun RecentsView(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = recent.name.uppercase(),
+                                    text = if (recent.name.isBlank() || recent.name.equals("Unknown", true)) "UNSAVED" else recent.name.uppercase(),
                                     style = NothingDotTextStyle,
                                     color = if (recent.missed) NothingRed else Color.White,
                                     fontSize = 14.sp,
@@ -1021,7 +1161,7 @@ fun RecentsView(
                                 )
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(
                                         imageVector = if (recent.missed) Icons.Default.CallReceived else if (recent.type == "outgoing") Icons.Default.CallMade else Icons.Default.CallReceived,
@@ -1029,11 +1169,42 @@ fun RecentsView(
                                         tint = if (recent.missed) NothingRed else if (recent.type == "outgoing") Color.Green else Color.Cyan,
                                         modifier = Modifier.size(10.dp)
                                     )
+                                    
+                                    // ADD CONTACT BUTTON for unsaved numbers
+                                    val isUnsaved = remember(recent.name, recent.number) {
+                                        val n = recent.name.trim()
+                                        n.isBlank() || n.equals("Unknown", true) || n == recent.number.trim()
+                                    }
+                                    
+                                    if (isUnsaved) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(NothingRed)
+                                                .clickable {
+                                                    val intent = Intent(Intent.ACTION_INSERT).apply {
+                                                        type = "vnd.android.cursor.dir/contact"
+                                                        putExtra(ContactsContract.Intents.Insert.PHONE, recent.number)
+                                                    }
+                                                    context.startActivity(intent)
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PersonAdd,
+                                                contentDescription = "Save",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+
                                     Text(
                                         text = recent.number,
                                         style = NothingMonoTextStyle,
                                         color = NothingLightGray,
-                                        fontSize = 10.sp,
+                                        fontSize = 11.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -1062,23 +1233,46 @@ fun RecentsView(
                             }
                         }
 
-                        Column(
-                            horizontalAlignment = Alignment.End,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End,
                             modifier = Modifier.padding(start = 8.dp)
                         ) {
-                            Text(
-                                text = recent.time,
-                                style = NothingMonoTextStyle,
-                                color = Color.Gray,
-                                fontSize = 10.sp
-                            )
-                            Text(
-                                text = "CALL NOW",
-                                style = NothingMonoTextStyle,
-                                color = NothingRed,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            IconButton(
+                                onClick = { onSeeHistory(recent.number, recent.name) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = "History",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onCallItem(recent) }
+                                    .padding(4.dp)
+                            ) {
+                                Text(
+                                    text = recent.time,
+                                    style = NothingMonoTextStyle,
+                                    color = Color.Gray,
+                                    fontSize = 10.sp
+                                )
+                                Text(
+                                    text = "CALL NOW",
+                                    style = NothingMonoTextStyle,
+                                    color = NothingRed,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
@@ -1291,6 +1485,7 @@ fun ContactsView(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onCallItem: (ContactItem) -> Unit,
+    onSeeHistory: (String, String) -> Unit,
     onRefresh: () -> Unit
 ) {
     val filteredContacts = remember(contacts, searchQuery) {
@@ -1394,7 +1589,8 @@ fun ContactsView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f)
+                                .clickable { onSeeHistory(contact.number, contact.name) },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -1445,20 +1641,39 @@ fun ContactsView(
                             }
                         }
 
-                        IconButton(
-                            onClick = { onCallItem(contact) },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.08f))
-                                .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Call,
-                                contentDescription = "Call",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { onSeeHistory(contact.number, contact.name) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.05f))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = "History",
+                                    tint = NothingLightGray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            IconButton(
+                                onClick = { onCallItem(contact) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = "Call",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1562,22 +1777,24 @@ fun IncomingCallOverlay(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
+                val title = if (name.isNotBlank()) name else number
                 Text(
-                    text = name.uppercase(),
+                    text = title.uppercase(),
                     style = NothingDotTextStyle,
                     color = Color.White,
                     fontSize = 32.sp,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = number,
-                    style = NothingMonoTextStyle,
-                    color = NothingLightGray,
-                    fontSize = 16.sp
-                )
+                if (name.isNotBlank() && number.isNotBlank() && number != name) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = number,
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 16.sp
+                    )
+                }
             }
 
             // Central Animated Icon
@@ -1817,7 +2034,7 @@ fun ActiveCallOverlay(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = name.take(1).uppercase(),
+                                    text = if (name.isNotBlank()) name.take(1).uppercase() else "?",
                                     style = NothingDotTextStyle,
                                     color = Color.White,
                                     fontSize = 32.sp
@@ -1827,12 +2044,23 @@ fun ActiveCallOverlay(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
+                        val displayTitle = if (name.isNotBlank()) name else number
                         Text(
-                            text = name.uppercase(),
+                            text = displayTitle.uppercase(),
                             style = NothingDotTextStyle,
                             color = Color.White,
                             fontSize = 22.sp
                         )
+
+                        if (name.isNotBlank() && number.isNotBlank() && number != name) {
+                            Text(
+                                text = number,
+                                style = NothingMonoTextStyle,
+                                color = NothingLightGray,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
 
                         Text(
                             text = number,

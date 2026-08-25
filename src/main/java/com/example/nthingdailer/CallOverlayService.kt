@@ -66,20 +66,29 @@ class CallOverlayService : Service() {
         val name = intent?.getStringExtra("name")
         val state = intent?.getIntExtra("state", android.telecom.Call.STATE_ACTIVE) ?: android.telecom.Call.STATE_ACTIVE
         
+        // Reset state for new call
         currentNumber = number
         callStartTime = System.currentTimeMillis()
+        isRecording = false 
         
         // Update manager state
         CallStateManager.updateCallState(true, name, number, state)
         
-        // Update notification with caller info
+        // Update notification with current caller info
         val notification = createNotification(name ?: number ?: "Active Call")
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIFICATION_ID, notification)
 
         if (Settings.canDrawOverlays(this)) {
             showOverlay(number, name)
-            if (number == null) fetchLatestCallLogNumber()
+            
+            // Only use fallback for outgoing calls where broadcast number is null.
+            // For incoming calls, log fetch is guaranteed to return the previous call.
+            if (number == null && state != android.telecom.Call.STATE_RINGING) {
+                fetchLatestCallLogNumber()
+            } else if (number != null) {
+                lookupContact(number)
+            }
         }
         return START_NOT_STICKY
     }
@@ -93,13 +102,17 @@ class CallOverlayService : Service() {
                 val logs = repository.fetchCallLogs()
                 if (logs.isNotEmpty()) {
                     val latest = logs.first()
-                    // Check if it's likely the current call (recent)
-                    withContext(Dispatchers.Main) {
-                        currentNumber = latest.number
-                        updateOverlayText(latest.number, latest.name)
-                        lookupContact(latest.number)
+                    // ONLY use if it was started within the last 15 seconds to avoid showing old calls
+                    val isRecent = Math.abs(System.currentTimeMillis() - latest.timestamp) < 15000
+                    
+                    if (isRecent) {
+                        withContext(Dispatchers.Main) {
+                            currentNumber = latest.number
+                            updateOverlayText(latest.number, latest.name)
+                            lookupContact(latest.number)
+                        }
+                        break
                     }
-                    break
                 }
             }
         }
@@ -277,12 +290,19 @@ class CallOverlayService : Service() {
     private fun updateOverlayText(number: String?, name: String?) {
         val infoText = overlayView?.findViewById<TextView>(android.R.id.text2)
         val numText = overlayView?.findViewById<TextView>(android.R.id.summary)
+        
+        val currentState = CallStateManager.callState.value
+        
         if (name != null && name.isNotBlank() && !name.equals("Unknown", ignoreCase = true)) {
             infoText?.text = name.uppercase()
             numText?.text = number ?: ""
             numText?.visibility = View.VISIBLE
+        } else if (number != null && number.isNotBlank()) {
+            infoText?.text = number
+            numText?.visibility = View.GONE
         } else {
-            infoText?.text = number ?: ""
+            // Number is unknown/null
+            infoText?.text = if (currentState == android.telecom.Call.STATE_RINGING) "INCOMING CALL" else "ACTIVE CALL"
             numText?.visibility = View.GONE
         }
     }

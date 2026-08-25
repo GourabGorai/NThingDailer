@@ -4,6 +4,11 @@ import android.content.Intent
 import android.telecom.Call
 import android.telecom.InCallService
 import android.telecom.VideoProfile
+import com.example.nthingdailer.model.DialerRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Required service for an app to be considered a valid Dialer by the Android system.
@@ -31,8 +36,8 @@ class NothingInCallService : InCallService() {
             if (state == Call.STATE_DISCONNECTED) {
                 CallStateManager.updateCallState(false)
                 currentCall = null
-                stopOverlay()
             } else {
+                // Pass null for name; the manager will keep the existing name if one was found
                 CallStateManager.updateCallState(true, null, number, state)
             }
         }
@@ -47,14 +52,36 @@ class NothingInCallService : InCallService() {
         val number = call.details.handle?.schemeSpecificPart
         CallStateManager.updateCallState(true, null, number, call.state)
         
+        if (number != null) {
+            lookupContact(number, call.state)
+        }
+        
         // Bring app to foreground if we are default dialer
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         startActivity(intent)
+    }
 
-        // Show overlay in case user backgrounds the app
-        startOverlay(number)
+    private fun lookupContact(number: String, state: Int) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val repository = DialerRepository(applicationContext)
+            val contacts = repository.fetchContacts()
+            val cleanNum = number.replace("\\D".toRegex(), "")
+            if (cleanNum.length < 3) return@launch // Avoid matching very short sequences
+            
+            val match = contacts.find { 
+                val cNum = it.number.replace("\\D".toRegex(), "")
+                // Match if one contains the other, but prioritize exact suffix match for reliability
+                cNum.endsWith(cleanNum) || cleanNum.endsWith(cNum) || 
+                (cleanNum.length >= 7 && cNum.contains(cleanNum))
+            }
+            if (match != null) {
+                withContext(Dispatchers.Main) {
+                    CallStateManager.updateCallState(true, match.name, number, state)
+                }
+            }
+        }
     }
 
     override fun onCallRemoved(call: Call) {
@@ -63,26 +90,6 @@ class NothingInCallService : InCallService() {
         if (currentCall == call) {
             currentCall = null
             CallStateManager.updateCallState(false)
-            stopOverlay()
         }
-    }
-
-    private fun startOverlay(number: String?) {
-        val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
-        if (!prefs.getBoolean("is_overlay_enabled", true)) return
-
-        val intent = Intent(this, CallOverlayService::class.java).apply {
-            putExtra("number", number)
-        }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-    }
-
-    private fun stopOverlay() {
-        val intent = Intent(this, CallOverlayService::class.java)
-        stopService(intent)
     }
 }

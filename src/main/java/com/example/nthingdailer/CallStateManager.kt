@@ -30,16 +30,24 @@ object CallStateManager {
         }
         _isCallActive.value = active
         _callState.value = if (active) state else Call.STATE_DISCONNECTED
+        
         if (active) {
-            name?.let { _lastCallName.value = it }
-            number?.let { _lastCallNumber.value = it }
             if (!wasActive) {
+                // New call starting: reset everything
+                _lastCallName.value = name
+                _lastCallNumber.value = number
                 _lastCallStartTime.value = System.currentTimeMillis()
+            } else {
+                // Existing call update: only update if new info is provided
+                name?.let { _lastCallName.value = it }
+                number?.let { _lastCallNumber.value = it }
             }
         }
     }
 
     fun clearAcknowledgement() {
         _triggerAcknowledgement.value = false
+        _lastCallName.value = null
+        _lastCallNumber.value = null
     }
 }

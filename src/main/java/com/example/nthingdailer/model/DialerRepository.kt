@@ -125,7 +125,8 @@ class DialerRepository(private val context: Context) {
                         time = timeLabel,
                         duration = duration,
                         missed = typeInt == CallLog.Calls.MISSED_TYPE,
-                        recordingPath = recordingPath
+                        recordingPath = recordingPath,
+                        timestamp = dateLong
                     )
                 )
             }
