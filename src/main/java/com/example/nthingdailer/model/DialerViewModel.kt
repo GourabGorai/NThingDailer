@@ -1,8 +1,14 @@
 package com.example.nthingdailer.model
 
 import android.app.Application
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.CallLog
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,8 +39,25 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
     private val _lastCallInfo = MutableStateFlow<Pair<String, String>?>(null) // Name, Number
     val lastCallInfo: StateFlow<Pair<String, String>?> = _lastCallInfo.asStateFlow()
 
+    private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            refreshData()
+        }
+    }
+
     init {
+        application.contentResolver.registerContentObserver(
+            CallLog.Calls.CONTENT_URI,
+            true,
+            callLogObserver
+        )
         refreshData()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        getApplication<Application>().contentResolver.unregisterContentObserver(callLogObserver)
     }
 
     fun setCallState(active: Boolean, name: String? = null, number: String? = null) {
@@ -53,8 +76,12 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
         _lastCallInfo.value = null
     }
 
+    private var refreshJob: Job? = null
     fun refreshData() {
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            // Add a small delay to debounce multiple rapid changes (common with CallLog updates)
+            delay(300)
             _contacts.value = repository.fetchContacts()
             _recents.value = repository.fetchCallLogs()
         }
