@@ -19,6 +19,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -145,6 +146,16 @@ class CallOverlayService : Service() {
         try {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
             
+            val root = object : FrameLayout(this) {
+                override fun performClick(): Boolean { return super.performClick() }
+            }.apply {
+                clipChildren = false
+                clipToPadding = false
+                // Add a small buffer padding to ensure the close button is not clipped by the window edge
+                val buffer = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4f, resources.displayMetrics).toInt()
+                setPadding(buffer, buffer, buffer, buffer)
+            }
+
             val container = object : LinearLayout(this) {
                 override fun performClick(): Boolean { return super.performClick() }
             }.apply {
@@ -158,6 +169,32 @@ class CallOverlayService : Service() {
                 elevation = 40f
                 gravity = Gravity.CENTER_HORIZONTAL
                 minimumWidth = 500 // Ensure enough width for full numbers
+            }
+
+            val closeBtn = TextView(this).apply {
+                text = "✕"
+                setTextColor(0xFFFFFFFF.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                // Use Nothing Red and a white border to make it extremely visible
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(0xFFE5272C.toInt()) // Nothing Red
+                    setStroke(2, 0xFFFFFFFF.toInt()) // Solid white border
+                }
+                elevation = 50f // Higher than container
+                
+                // Convert dp to pixels for consistent sizing
+                val size = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 36f, resources.displayMetrics).toInt()
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.TOP or Gravity.END
+                    topMargin = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f, resources.displayMetrics).toInt()
+                    rightMargin = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f, resources.displayMetrics).toInt()
+                }
+                setOnClickListener {
+                    stopSelf()
+                }
             }
 
             val titleText = TextView(this).apply {
@@ -223,7 +260,10 @@ class CallOverlayService : Service() {
             container.addView(infoText)
             container.addView(numberText)
             container.addView(recordBtn)
-            overlayView = container
+
+            root.addView(container)
+            root.addView(closeBtn)
+            overlayView = root
 
             updateOverlayText(number, name)
 
@@ -240,7 +280,7 @@ class CallOverlayService : Service() {
                 y = prefs.getInt("popup_y_offset", 150)
             }
 
-            container.setOnTouchListener { _, event ->
+            root.setOnTouchListener { _, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         initialX = params.x
@@ -261,9 +301,15 @@ class CallOverlayService : Service() {
                         if (diffX < 10 && diffY < 10) {
                             val location = IntArray(2)
                             recordBtn.getLocationOnScreen(location)
-                            if (event.rawX >= location[0] && event.rawX <= location[0] + recordBtn.width &&
-                                event.rawY >= location[1] && event.rawY <= location[1] + recordBtn.height) {
+                            if (event.rawX >= location[0].toFloat() && event.rawX <= (location[0] + recordBtn.width).toFloat() &&
+                                event.rawY >= location[1].toFloat() && event.rawY <= (location[1] + recordBtn.height).toFloat()) {
                                 recordBtn.performClick()
+                            } else {
+                                closeBtn.getLocationOnScreen(location)
+                                if (event.rawX >= location[0].toFloat() && event.rawX <= (location[0] + closeBtn.width).toFloat() &&
+                                    event.rawY >= location[1].toFloat() && event.rawY <= (location[1] + closeBtn.height).toFloat()) {
+                                    closeBtn.performClick()
+                                }
                             }
                         } else {
                             getSharedPreferences("nthing_prefs", MODE_PRIVATE).edit {
