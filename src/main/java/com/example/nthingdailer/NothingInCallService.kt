@@ -16,6 +16,9 @@ import kotlinx.coroutines.withContext
  */
 class NothingInCallService : InCallService() {
 
+    private var wasAnswered = false
+    private var isIncoming = false
+
     companion object {
         private var currentCall: Call? = null
 
@@ -32,8 +35,20 @@ class NothingInCallService : InCallService() {
     private val callCallback = object : Call.Callback() {
         override fun onStateChanged(call: Call?, state: Int) {
             super.onStateChanged(call, state)
+            if (state == Call.STATE_ACTIVE) {
+                wasAnswered = true
+            }
+            
             val number = call?.details?.handle?.schemeSpecificPart
             if (state == Call.STATE_DISCONNECTED) {
+                if (isIncoming && !wasAnswered) {
+                    // This was a missed call
+                    NotificationHelper.showMissedCallNotification(
+                        applicationContext,
+                        number ?: "Unknown",
+                        CallStateManager.lastCallName.value
+                    )
+                }
                 CallStateManager.updateCallState(false)
                 currentCall = null
             } else {
@@ -46,10 +61,23 @@ class NothingInCallService : InCallService() {
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
         currentCall = call
+        wasAnswered = false
+        isIncoming = call.state == Call.STATE_RINGING
         call.registerCallback(callCallback)
         
         // Extract number if available
         val number = call.details.handle?.schemeSpecificPart
+        
+        if (number != null) {
+            val repository = DialerRepository(applicationContext)
+            if (repository.isNumberBlocked(number)) {
+                // BLOCK THE CALL
+                call.disconnect()
+                NotificationHelper.showBlockedCallNotification(this, number)
+                return 
+            }
+        }
+
         CallStateManager.updateCallState(true, null, number, call.state)
         
         if (number != null) {
@@ -59,6 +87,7 @@ class NothingInCallService : InCallService() {
         // Bring app to foreground if we are default dialer
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("from_call_service", true)
         }
         startActivity(intent)
     }

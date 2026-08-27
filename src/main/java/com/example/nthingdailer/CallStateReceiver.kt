@@ -9,6 +9,7 @@ import android.telephony.TelephonyManager
 import android.telecom.TelecomManager
 import android.widget.Toast
 import android.util.Log
+import com.example.nthingdailer.model.DialerRepository
 
 class CallStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -43,6 +44,15 @@ class CallStateReceiver : BroadcastReceiver() {
 
         if (callState == android.telecom.Call.STATE_DISCONNECTED) {
             stopOverlayService(context)
+        } else if (callState == android.telecom.Call.STATE_RINGING) {
+            // Check for block even if not default dialer (to suppress popup)
+            val repository = DialerRepository(context)
+            if (incomingNumber != null && repository.isNumberBlocked(incomingNumber)) {
+                Log.d("NothingDialer", "Suppressing popup for blocked number: $incomingNumber")
+                NotificationHelper.showBlockedCallNotification(context, incomingNumber)
+                return 
+            }
+            triggerPopup(context, incomingNumber, callState)
         } else {
             triggerPopup(context, incomingNumber, callState)
         }

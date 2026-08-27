@@ -24,6 +24,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,12 +75,24 @@ enum class DialerTab {
 @Composable
 fun FrontDialerScreen(
     viewModel: DialerViewModel = viewModel(),
+    initialTab: String? = null,
     onFlipToRear: () -> Unit,
     onTriggerGlyphPulse: () -> Unit,
-    onStartRealCall: (String) -> Unit
+    onStartRealCall: (String) -> Unit,
+    onDismissCallSession: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var currentTab by remember { mutableStateOf(DialerTab.KEYPAD) }
+
+    LaunchedEffect(initialTab) {
+        initialTab?.let {
+            currentTab = when (it) {
+                "recents" -> DialerTab.RECENTS
+                "contacts" -> DialerTab.CONTACTS
+                else -> DialerTab.KEYPAD
+            }
+        }
+    }
 
     val roleLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -91,6 +104,8 @@ fun FrontDialerScreen(
     val currentDialNumber by viewModel.dialNumber.collectAsState()
     val recentsList by viewModel.recents.collectAsState()
     val contactsList by viewModel.contacts.collectAsState()
+    val favoritesList by viewModel.favorites.collectAsState()
+    val blockedNumbers by viewModel.blockedNumbers.collectAsState()
     val t9Matches by viewModel.t9Matches.collectAsState()
     
     val triggerAcknowledgement by CallStateManager.triggerAcknowledgement.collectAsState()
@@ -103,6 +118,7 @@ fun FrontDialerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var activeFilter by remember { mutableStateOf("all") } // "all" or "missed"
+    var contactFilter by remember { mutableStateOf("all") } // "all" or "favorites"
     var contactSearchQuery by remember { mutableStateOf("") }
     
     // History Overlay State
@@ -382,9 +398,11 @@ fun FrontDialerScreen(
 
                         DialerTab.RECENTS -> RecentsView(
                             recents = recentsList,
+                            blockedNumbers = blockedNumbers,
                             activeFilter = activeFilter,
                             onFilterChange = { activeFilter = it },
                             onCallItem = { rec -> startCall(rec.number, rec.name) },
+                            onToggleBlock = { viewModel.toggleBlock(it) },
                             onSeeHistory = { num, name -> 
                                 historyNumberToShow = num
                                 historyNameToShow = name
@@ -394,9 +412,15 @@ fun FrontDialerScreen(
 
                         DialerTab.CONTACTS -> ContactsView(
                             contacts = contactsList,
+                            favorites = favoritesList,
+                            blockedNumbers = blockedNumbers,
+                            activeFilter = contactFilter,
+                            onFilterChange = { contactFilter = it },
                             searchQuery = contactSearchQuery,
                             onSearchQueryChange = { contactSearchQuery = it },
                             onCallItem = { c -> startCall(c.number, c.name) },
+                            onToggleFavorite = { viewModel.toggleFavorite(it) },
+                            onToggleBlock = { viewModel.toggleBlock(it) },
                             onSeeHistory = { num, name ->
                                 historyNumberToShow = num
                                 historyNameToShow = name
@@ -538,6 +562,18 @@ fun FrontDialerScreen(
                     recents = recentsList,
                     onDismiss = { historyNumberToShow = null; historyNameToShow = null },
                     onCall = { num -> startCall(num) }
+                )
+            }
+
+            // CALL ENDED ACKNOWLEDGEMENT OVERLAY
+            if (triggerAcknowledgement) {
+                AcknowledgementOverlay(
+                    name = lastCallNameFlow ?: "UNKNOWN",
+                    number = lastCallNumberFlow ?: "",
+                    onDismiss = {
+                        CallStateManager.clearAcknowledgement()
+                        onDismissCallSession()
+                    }
                 )
             }
         }
@@ -1025,15 +1061,21 @@ fun KeypadButton(
 @Composable
 fun RecentsView(
     recents: List<RecentItem>,
+    blockedNumbers: Set<String>,
     activeFilter: String,
     onFilterChange: (String) -> Unit,
     onCallItem: (RecentItem) -> Unit,
+    onToggleBlock: (String) -> Unit,
     onSeeHistory: (String, String) -> Unit,
     onRefresh: () -> Unit
 ) {
     val context = LocalContext.current
-    val filteredRecents = remember(recents, activeFilter) {
-        if (activeFilter == "missed") recents.filter { it.missed } else recents
+    val filteredRecents = remember(recents, activeFilter, blockedNumbers) {
+        when (activeFilter) {
+            "missed" -> recents.filter { it.missed }
+            "blocked" -> recents.filter { blockedNumbers.contains(it.number.replace("\\D".toRegex(), "")) }
+            else -> recents
+        }
     }
 
     Column(
@@ -1066,36 +1108,22 @@ fun RecentsView(
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(if (activeFilter == "all") Color.White else Color.Transparent)
-                        .clickable { onFilterChange("all") }
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "ALL",
-                        style = NothingMonoTextStyle,
-                        color = if (activeFilter == "all") Color.Black else NothingLightGray,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(if (activeFilter == "missed") Color.White else Color.Transparent)
-                        .clickable { onFilterChange("missed") }
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "MISSED",
-                        style = NothingMonoTextStyle,
-                        color = if (activeFilter == "missed") Color.Black else NothingLightGray,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                listOf("all", "missed", "blocked").forEach { filter ->
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (activeFilter == filter) Color.White else Color.Transparent)
+                            .clickable { onFilterChange(filter) }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = filter.uppercase(),
+                            style = NothingMonoTextStyle,
+                            color = if (activeFilter == filter) Color.Black else NothingLightGray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -1238,6 +1266,19 @@ fun RecentsView(
                             horizontalArrangement = Arrangement.End,
                             modifier = Modifier.padding(start = 8.dp)
                         ) {
+                            IconButton(
+                                onClick = { onToggleBlock(recent.number) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                val isBlocked = blockedNumbers.contains(recent.number.replace("\\D".toRegex(), ""))
+                                Icon(
+                                    imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.Block,
+                                    contentDescription = "Block",
+                                    tint = if (isBlocked) NothingRed else Color.Gray,
+                                    modifier = Modifier.size(16.dp).alpha(if (isBlocked) 1f else 0.4f)
+                                )
+                            }
+
                             IconButton(
                                 onClick = { onSeeHistory(recent.number, recent.name) },
                                 modifier = Modifier.size(32.dp)
@@ -1482,15 +1523,26 @@ fun NothingToggle(
 @Composable
 fun ContactsView(
     contacts: List<ContactItem>,
+    favorites: List<ContactItem>,
+    blockedNumbers: Set<String>,
+    activeFilter: String,
+    onFilterChange: (String) -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onCallItem: (ContactItem) -> Unit,
+    onToggleFavorite: (ContactItem) -> Unit,
+    onToggleBlock: (String) -> Unit,
     onSeeHistory: (String, String) -> Unit,
     onRefresh: () -> Unit
 ) {
-    val filteredContacts = remember(contacts, searchQuery) {
-        contacts.filter {
+    val filteredContacts = remember(contacts, searchQuery, activeFilter, blockedNumbers) {
+        val base = contacts.filter {
             it.name.contains(searchQuery, ignoreCase = true) || it.number.contains(searchQuery)
+        }
+        when (activeFilter) {
+            "favorites" -> base.filter { it.favorite }
+            "blocked" -> base.filter { blockedNumbers.contains(it.number.replace("\\D".toRegex(), "")) }
+            else -> base
         }
     }
 
@@ -1514,14 +1566,41 @@ fun ContactsView(
                 IconButton(onClick = onRefresh, modifier = Modifier.size(24.dp)) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = NothingRed, modifier = Modifier.size(16.dp))
                 }
+                Text(
+                    text = "${filteredContacts.size} PEOPLE",
+                    style = NothingMonoTextStyle,
+                    color = NothingLightGray,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
             }
 
-            Text(
-                text = "${filteredContacts.size} PEOPLE",
-                style = NothingMonoTextStyle,
-                color = NothingLightGray,
-                fontSize = 11.sp
-            )
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf("all", "favorites", "blocked").forEach { filter ->
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (activeFilter == filter) Color.White else Color.Transparent)
+                            .clickable { onFilterChange(filter) }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (filter == "favorites") "FAV" else if (filter == "blocked") "BLK" else "ALL",
+                            style = NothingMonoTextStyle,
+                            color = if (activeFilter == filter) Color.Black else NothingLightGray,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -1560,6 +1639,61 @@ fun ContactsView(
         )
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        if (searchQuery.isEmpty() && activeFilter == "all" && favorites.isNotEmpty()) {
+            Text(
+                text = "FAVORITES",
+                style = NothingDotTextStyle,
+                color = NothingRed,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)
+            ) {
+                items(favorites) { contact ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(64.dp)
+                            .clickable { onCallItem(contact) }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(NothingSurface)
+                                .border(1.dp, NothingRed.copy(alpha = 0.3f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = contact.initial,
+                                style = NothingDotTextStyle,
+                                color = Color.White,
+                                fontSize = 22.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = contact.name.split(" ").first().uppercase(),
+                            style = NothingMonoTextStyle,
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.05f),
+                thickness = 1.dp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+        }
 
         if (filteredContacts.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1642,6 +1776,41 @@ fun ContactsView(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { onToggleFavorite(contact) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.05f))
+                            ) {
+                                Icon(
+                                    imageVector = if (contact.favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "Favorite",
+                                    tint = if (contact.favorite) NothingRed else NothingLightGray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            IconButton(
+                                onClick = { onToggleBlock(contact.number) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.05f))
+                            ) {
+                                val isBlocked = blockedNumbers.contains(contact.number.replace("\\D".toRegex(), ""))
+                                Icon(
+                                    imageVector = Icons.Default.Block,
+                                    contentDescription = "Block",
+                                    tint = if (isBlocked) NothingRed else NothingLightGray,
+                                    modifier = Modifier.size(16.dp).alpha(if (isBlocked) 1f else 0.4f)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
                             IconButton(
                                 onClick = { onSeeHistory(contact.number, contact.name) },
                                 modifier = Modifier

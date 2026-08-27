@@ -21,6 +21,12 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
     private val _contacts = MutableStateFlow<List<ContactItem>>(emptyList())
     val contacts: StateFlow<List<ContactItem>> = _contacts.asStateFlow()
 
+    private val _favorites = MutableStateFlow<List<ContactItem>>(emptyList())
+    val favorites: StateFlow<List<ContactItem>> = _favorites.asStateFlow()
+
+    private val _blockedNumbers = MutableStateFlow<Set<String>>(emptySet())
+    val blockedNumbers: StateFlow<Set<String>> = _blockedNumbers.asStateFlow()
+
     private val _recents = MutableStateFlow<List<RecentItem>>(emptyList())
     val recents: StateFlow<List<RecentItem>> = _recents.asStateFlow()
 
@@ -76,13 +82,32 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
         _lastCallInfo.value = null
     }
 
+    fun toggleFavorite(contact: ContactItem) {
+        viewModelScope.launch {
+            repository.toggleFavorite(contact.id, !contact.favorite)
+            refreshData()
+        }
+    }
+
+    fun toggleBlock(number: String) {
+        if (repository.isNumberBlocked(number)) {
+            repository.unblockNumber(number)
+        } else {
+            repository.blockNumber(number)
+        }
+        refreshData()
+    }
+
     private var refreshJob: Job? = null
     fun refreshData() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             // Add a small delay to debounce multiple rapid changes (common with CallLog updates)
             delay(300)
-            _contacts.value = repository.fetchContacts()
+            val fetchedContacts = repository.fetchContacts()
+            _contacts.value = fetchedContacts
+            _favorites.value = fetchedContacts.filter { it.favorite }
+            _blockedNumbers.value = repository.getBlockedNumbers()
             _recents.value = repository.fetchCallLogs()
         }
     }

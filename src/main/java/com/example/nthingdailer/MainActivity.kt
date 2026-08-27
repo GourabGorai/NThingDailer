@@ -37,11 +37,14 @@ import com.example.nthingdailer.ui.screens.RearGlyphScreen
 import com.example.nthingdailer.ui.theme.*
 import android.content.IntentFilter
 import android.telephony.TelephonyManager
+import android.view.WindowManager
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
     private val callStateReceiver = CallStateReceiver()
+    private var isFromCallService = false
+    private var initialTab: String? = null
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -57,6 +60,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        isFromCallService = intent.getBooleanExtra("from_call_service", false)
+        initialTab = intent.getStringExtra("start_tab")
+
+        // Allow activity to show over lock screen for incoming calls
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+
         enableEdgeToEdge()
 
         val filter = IntentFilter().apply {
@@ -135,12 +155,30 @@ class MainActivity : ComponentActivity() {
                     }
 
                     MainDialerApp(
+                        initialTab = initialTab,
                         onStartRealCall = { number ->
                             makeRealPhoneCall(number)
+                        },
+                        onFinishActivity = {
+                            if (isFromCallService) {
+                                finishAndRemoveTask()
+                            }
                         }
                     )
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("from_call_service", false)) {
+            isFromCallService = true
+        }
+        val tab = intent.getStringExtra("start_tab")
+        if (tab != null) {
+            initialTab = tab
         }
     }
 
@@ -219,7 +257,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainDialerApp(onStartRealCall: (String) -> Unit) {
+fun MainDialerApp(initialTab: String?, onStartRealCall: (String) -> Unit, onFinishActivity: () -> Unit) {
     val viewModel: DialerViewModel = viewModel()
     var isShowingRearGlyph by remember { mutableStateOf(false) }
     var isGlyphPulsing by remember { mutableStateOf(false) }
@@ -316,9 +354,11 @@ fun MainDialerApp(onStartRealCall: (String) -> Unit) {
                 } else {
                     FrontDialerScreen(
                         viewModel = viewModel,
+                        initialTab = initialTab,
                         onFlipToRear = { isShowingRearGlyph = true },
                         onTriggerGlyphPulse = { triggerGlyphPulse() },
-                        onStartRealCall = onStartRealCall
+                        onStartRealCall = onStartRealCall,
+                        onDismissCallSession = onFinishActivity
                     )
                 }
             }

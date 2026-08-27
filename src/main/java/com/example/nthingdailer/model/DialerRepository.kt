@@ -57,6 +57,48 @@ class DialerRepository(private val context: Context) {
         contacts
     }
 
+    suspend fun toggleFavorite(contactId: Long, isFavorite: Boolean) = withContext(Dispatchers.IO) {
+        val values = android.content.ContentValues().apply {
+            put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
+        }
+        try {
+            context.contentResolver.update(
+                ContactsContract.Contacts.CONTENT_URI,
+                values,
+                "${ContactsContract.Contacts._ID} = ?",
+                arrayOf(contactId.toString())
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun blockNumber(number: String) {
+        val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+        val blocked = prefs.getStringSet("blocked_numbers", mutableSetOf()) ?: mutableSetOf()
+        val updated = blocked.toMutableSet().apply { add(number.replace("\\D".toRegex(), "")) }
+        prefs.edit().putStringSet("blocked_numbers", updated).apply()
+    }
+
+    fun unblockNumber(number: String) {
+        val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+        val blocked = prefs.getStringSet("blocked_numbers", mutableSetOf()) ?: mutableSetOf()
+        val updated = blocked.toMutableSet().apply { remove(number.replace("\\D".toRegex(), "")) }
+        prefs.edit().putStringSet("blocked_numbers", updated).apply()
+    }
+
+    fun getBlockedNumbers(): Set<String> {
+        val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+        return prefs.getStringSet("blocked_numbers", emptySet()) ?: emptySet()
+    }
+
+    fun isNumberBlocked(number: String): Boolean {
+        val cleanNum = number.replace("\\D".toRegex(), "")
+        if (cleanNum.isEmpty()) return false
+        val blocked = getBlockedNumbers()
+        return blocked.any { it == cleanNum || cleanNum.endsWith(it) || it.endsWith(cleanNum) }
+    }
+
     suspend fun fetchCallLogs(): List<RecentItem> = withContext(Dispatchers.IO) {
         val recents = mutableListOf<RecentItem>()
         val projection = arrayOf(
