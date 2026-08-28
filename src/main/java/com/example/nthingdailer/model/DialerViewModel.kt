@@ -30,6 +30,9 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
     private val _recents = MutableStateFlow<List<RecentItem>>(emptyList())
     val recents: StateFlow<List<RecentItem>> = _recents.asStateFlow()
 
+    private val _recordings = MutableStateFlow<List<RecordingItem>>(emptyList())
+    val recordings: StateFlow<List<RecordingItem>> = _recordings.asStateFlow()
+
     private val _dialNumber = MutableStateFlow("")
     val dialNumber: StateFlow<String> = _dialNumber.asStateFlow()
 
@@ -109,6 +112,7 @@ class DialerViewModel(application: Application) : AndroidViewModel(application) 
             _favorites.value = fetchedContacts.filter { it.favorite }
             _blockedNumbers.value = repository.getBlockedNumbers()
             _recents.value = repository.fetchCallLogs()
+            _recordings.value = repository.fetchAllRecordings()
         }
     }
 

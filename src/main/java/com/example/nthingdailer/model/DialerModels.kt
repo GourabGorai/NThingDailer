@@ -21,6 +21,15 @@ data class RecentItem(
     val timestamp: Long = 0
 )
 
+data class RecordingItem(
+    val id: String,
+    val name: String,
+    val number: String,
+    val date: String,
+    val path: String,
+    val timestamp: Long
+)
+
 object SampleData {
     val initialContacts = listOf(
         ContactItem(1, "Carl Pei", "+44 7700 900077", "C", "Mobile", true),

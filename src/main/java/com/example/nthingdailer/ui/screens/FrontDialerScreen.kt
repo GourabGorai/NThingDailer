@@ -58,9 +58,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.nthingdailer.CallStateManager
 import com.example.nthingdailer.audio.AudioSynthHelper
+import com.example.nthingdailer.audio.RecordingPlayer
 import com.example.nthingdailer.model.ContactItem
 import com.example.nthingdailer.model.DialerViewModel
 import com.example.nthingdailer.model.RecentItem
+import com.example.nthingdailer.model.RecordingItem
 import com.example.nthingdailer.model.SampleData
 import com.example.nthingdailer.ui.components.DotMatrixBackground
 import com.example.nthingdailer.ui.theme.*
@@ -69,7 +71,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 enum class DialerTab {
-    RECENTS, KEYPAD, CONTACTS, SETTINGS
+    RECENTS, KEYPAD, CONTACTS, RECORDINGS, SETTINGS
 }
 
 @Composable
@@ -106,6 +108,7 @@ fun FrontDialerScreen(
     val contactsList by viewModel.contacts.collectAsState()
     val favoritesList by viewModel.favorites.collectAsState()
     val blockedNumbers by viewModel.blockedNumbers.collectAsState()
+    val recordingsList by viewModel.recordings.collectAsState()
     val t9Matches by viewModel.t9Matches.collectAsState()
     
     val triggerAcknowledgement by CallStateManager.triggerAcknowledgement.collectAsState()
@@ -171,8 +174,19 @@ fun FrontDialerScreen(
             if (isRecording && activeCallNumber.isNotEmpty()) {
                 val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
                 val recordingId = "rec_${activeCallNumber}_${activeCallStartTime}"
+                
+                // Create a real dummy file so it exists on disk
+                val recordsDir = java.io.File(context.filesDir, "recordings")
+                if (!recordsDir.exists()) recordsDir.mkdirs()
+                val recFile = java.io.File(recordsDir, "rec_${activeCallNumber}_${activeCallStartTime}.mp3")
+                try {
+                    recFile.createNewFile()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
                 prefs.edit {
-                    putString(recordingId, "internal_storage/recordings/call_rec.mp3")
+                    putString(recordingId, recFile.absolutePath)
                     val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
                     val updated = existing.toMutableSet().apply { add(recordingId) }
                     putStringSet("all_recordings", updated)
@@ -428,6 +442,44 @@ fun FrontDialerScreen(
                             onRefresh = { viewModel.refreshData() }
                         )
 
+                        DialerTab.RECORDINGS -> {
+                            var playingId by remember { mutableStateOf<String?>(null) }
+                            RecordingsView(
+                                recordings = recordingsList,
+                                playingId = playingId,
+                                onPlay = { rec -> 
+                                    if (playingId == rec.id) {
+                                        RecordingPlayer.stop()
+                                        playingId = null
+                                    } else {
+                                        playingId = rec.id
+                                        RecordingPlayer.play(context, rec.id, rec.path) {
+                                            playingId = null
+                                        }
+                                    }
+                                },
+                                onShare = { rec ->
+                                    val file = java.io.File(rec.path)
+                                    if (file.exists()) {
+                                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "audio/mpeg"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Share Recording"))
+                                    } else {
+                                        Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onRefresh = { viewModel.refreshData() }
+                            )
+                        }
+
                         DialerTab.SETTINGS -> {
                     val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
                     val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
@@ -511,6 +563,14 @@ fun FrontDialerScreen(
                         onClick = { currentTab = DialerTab.CONTACTS }
                     )
 
+                    // RECORDINGS
+                    NavItem(
+                        icon = Icons.Default.Mic,
+                        label = "RECS",
+                        selected = currentTab == DialerTab.RECORDINGS,
+                        onClick = { currentTab = DialerTab.RECORDINGS }
+                    )
+
                     // SETTINGS
                     NavItem(
                         icon = Icons.Default.Settings,
@@ -544,8 +604,14 @@ fun FrontDialerScreen(
                         isSpeaker = isSpeaker,
                         isRecording = isRecording,
                         isKeypadVisible = isKeypadVisible,
-                        onToggleMute = { isMuted = !isMuted },
-                        onToggleSpeaker = { isSpeaker = !isSpeaker },
+                        onToggleMute = { 
+                            isMuted = !isMuted
+                            com.example.nthingdailer.NothingInCallService.setMuted(isMuted)
+                        },
+                        onToggleSpeaker = { 
+                            isSpeaker = !isSpeaker 
+                            com.example.nthingdailer.NothingInCallService.setSpeaker(isSpeaker)
+                        },
                         onToggleRecording = { isRecording = !isRecording },
                         onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
                         onGlyphSync = { onTriggerGlyphPulse() },
@@ -1314,6 +1380,147 @@ fun RecentsView(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecordingsView(
+    recordings: List<RecordingItem>,
+    playingId: String?,
+    onPlay: (RecordingItem) -> Unit,
+    onShare: (RecordingItem) -> Unit,
+    onRefresh: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "RECORDINGS",
+                    style = NothingDotTextStyle,
+                    color = Color.White,
+                    fontSize = 18.sp
+                )
+                IconButton(onClick = onRefresh, modifier = Modifier.size(24.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = NothingRed, modifier = Modifier.size(16.dp))
+                }
+            }
+
+            Text(
+                text = "${recordings.size} FILES",
+                style = NothingMonoTextStyle,
+                color = NothingLightGray,
+                fontSize = 11.sp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (recordings.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "NO RECORDINGS FOUND",
+                    style = NothingMonoTextStyle,
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(recordings) { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(NothingButtonGlass)
+                            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                            .clickable { onPlay(item) }
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(NothingSurface)
+                                    .border(1.dp, NothingRed.copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (playingId == item.id) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = if (playingId == item.id) NothingRed else Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.name.uppercase(),
+                                    style = NothingDotTextStyle,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = item.number,
+                                    style = NothingMonoTextStyle,
+                                    color = NothingLightGray,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { onShare(item) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Share",
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Text(
+                                    text = item.date,
+                                    style = NothingMonoTextStyle,
+                                    color = Color.Gray,
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Text(
+                                text = if (playingId == item.id) "TAP TO STOP" else "TAP TO PLAY",
+                                style = NothingMonoTextStyle,
+                                color = NothingRed,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -2309,13 +2516,25 @@ fun ActiveCallOverlay(
                             modifier = Modifier.weight(1f),
                             onClick = onGlyphSync
                         )
-                        InCallControlButton(
-                            icon = Icons.Default.RadioButtonChecked,
-                            label = "RECORD",
-                            selected = isRecording,
-                            modifier = Modifier.weight(1f),
-                            onClick = onToggleRecording
-                        )
+                        
+                        // Check if we can merge (simplified check: just show if recording is not active to save space)
+                        if (!isRecording) {
+                            InCallControlButton(
+                                icon = Icons.Default.CallMerge,
+                                label = "MERGE",
+                                selected = false,
+                                modifier = Modifier.weight(1f),
+                                onClick = { com.example.nthingdailer.NothingInCallService.mergeCalls() }
+                            )
+                        } else {
+                            InCallControlButton(
+                                icon = Icons.Default.RadioButtonChecked,
+                                label = "RECORD",
+                                selected = isRecording,
+                                modifier = Modifier.weight(1f),
+                                onClick = onToggleRecording
+                            )
+                        }
                     }
                 }
 

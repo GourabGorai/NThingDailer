@@ -99,6 +99,55 @@ class DialerRepository(private val context: Context) {
         return blocked.any { it == cleanNum || cleanNum.endsWith(it) || it.endsWith(cleanNum) }
     }
 
+    suspend fun fetchAllRecordings(): List<RecordingItem> = withContext(Dispatchers.IO) {
+        val recordings = mutableListOf<RecordingItem>()
+        val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+        val allRecordingIds = (prefs.getStringSet("all_recordings", emptySet()) ?: emptySet()).toMutableSet()
+        
+        val contacts = fetchContacts()
+        var changed = false
+
+        for (recId in allRecordingIds.toList()) {
+            val path = prefs.getString(recId, null) ?: continue
+            
+            // Check if file actually exists on the device
+            val file = java.io.File(path)
+            if (!file.exists()) {
+                // Clean up stale reference
+                allRecordingIds.remove(recId)
+                prefs.edit().remove(recId).apply()
+                changed = true
+                continue
+            }
+
+            // ID format: rec_number_timestamp
+            val parts = recId.removePrefix("rec_").split("_")
+            if (parts.size >= 2) {
+                val number = parts[0]
+                val timestamp = parts[1].toLongOrNull() ?: 0L
+                
+                val contactName = contacts.find { it.number.replace("\\D".toRegex(), "") == number.replace("\\D".toRegex(), "") }?.name ?: "Unknown"
+                
+                recordings.add(
+                    RecordingItem(
+                        id = recId,
+                        name = contactName,
+                        number = number,
+                        date = formatTime(timestamp),
+                        path = path,
+                        timestamp = timestamp
+                    )
+                )
+            }
+        }
+        
+        if (changed) {
+            prefs.edit().putStringSet("all_recordings", allRecordingIds).apply()
+        }
+        
+        recordings.sortedByDescending { it.timestamp }
+    }
+
     suspend fun fetchCallLogs(): List<RecentItem> = withContext(Dispatchers.IO) {
         val recents = mutableListOf<RecentItem>()
         val projection = arrayOf(

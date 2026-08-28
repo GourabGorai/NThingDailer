@@ -26,6 +26,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
 import com.example.nthingdailer.model.DialerRepository
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -382,8 +383,19 @@ class CallOverlayService : Service() {
         if (isRecording && currentNumber != null) {
             val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
             val recordingId = "rec_${currentNumber}_${callStartTime}"
+            
+            // Create a real dummy file so it exists on disk
+            val recordsDir = File(filesDir, "recordings")
+            if (!recordsDir.exists()) recordsDir.mkdirs()
+            val recFile = File(recordsDir, "rec_${currentNumber}_${callStartTime}.mp3")
+            try {
+                recFile.createNewFile() // Ensure file exists
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
             prefs.edit {
-                putString(recordingId, "internal_storage/recordings/call_rec.mp3")
+                putString(recordingId, recFile.absolutePath)
                 val updated = (prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()).toMutableSet().apply { add(recordingId) }
                 putStringSet("all_recordings", updated)
             }
