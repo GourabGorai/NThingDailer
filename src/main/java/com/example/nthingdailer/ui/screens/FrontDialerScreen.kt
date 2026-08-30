@@ -488,18 +488,20 @@ fun FrontDialerScreen(
                                 )
                             } else {
                                 val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+                                val isDefault = remember { mutableStateOf(isDefaultDialer()) }
                                 val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
                                 val isOverlayEnabled = remember { mutableStateOf(prefs.getBoolean("is_overlay_enabled", true)) }
 
                                 LaunchedEffect(Unit) {
                                     while(true) {
                                         hasOverlayPermission.value = Settings.canDrawOverlays(context)
-                                        delay(2000)
+                                        isDefault.value = isDefaultDialer()
+                                        delay(1000)
                                     }
                                 }
                                 
                                 SettingsView(
-                                    isDefault = isDefaultDialer(),
+                                    isDefault = isDefault.value,
                                     hasOverlay = hasOverlayPermission.value,
                                     isOverlayEnabled = isOverlayEnabled.value,
                                     onSetDefault = {
