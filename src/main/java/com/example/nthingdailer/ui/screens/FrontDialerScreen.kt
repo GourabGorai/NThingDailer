@@ -85,6 +85,7 @@ fun FrontDialerScreen(
 ) {
     val context = LocalContext.current
     var currentTab by remember { mutableStateOf(DialerTab.KEYPAD) }
+    var isShowingAboutScreen by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialTab) {
         initialTab?.let {
@@ -481,51 +482,58 @@ fun FrontDialerScreen(
                         }
 
                         DialerTab.SETTINGS -> {
-                    val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-                    val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
-                    val isOverlayEnabled = remember { mutableStateOf(prefs.getBoolean("is_overlay_enabled", true)) }
+                            if (isShowingAboutScreen) {
+                                AboutScreen(
+                                    onBack = { isShowingAboutScreen = false }
+                                )
+                            } else {
+                                val hasOverlayPermission = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+                                val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
+                                val isOverlayEnabled = remember { mutableStateOf(prefs.getBoolean("is_overlay_enabled", true)) }
 
-                    LaunchedEffect(Unit) {
-                        while(true) {
-                            hasOverlayPermission.value = Settings.canDrawOverlays(context)
-                            delay(2000)
-                        }
-                    }
-                    
-                    SettingsView(
-                        isDefault = isDefaultDialer(),
-                        hasOverlay = hasOverlayPermission.value,
-                        isOverlayEnabled = isOverlayEnabled.value,
-                        onSetDefault = {
-                            try {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    val roleManager = context.getSystemService(RoleManager::class.java)
-                                    if (roleManager?.isRoleAvailable(RoleManager.ROLE_DIALER) == true) {
-                                        val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                                        roleLauncher.launch(intent)
-                                    } else {
-                                        Toast.makeText(context, "Dialer role not available on this device", Toast.LENGTH_SHORT).show()
+                                LaunchedEffect(Unit) {
+                                    while(true) {
+                                        hasOverlayPermission.value = Settings.canDrawOverlays(context)
+                                        delay(2000)
                                     }
-                                } else {
-                                    val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
-                                        putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
-                                    }
-                                    roleLauncher.launch(intent)
                                 }
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                
+                                SettingsView(
+                                    isDefault = isDefaultDialer(),
+                                    hasOverlay = hasOverlayPermission.value,
+                                    isOverlayEnabled = isOverlayEnabled.value,
+                                    onSetDefault = {
+                                        try {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                val roleManager = context.getSystemService(RoleManager::class.java)
+                                                if (roleManager?.isRoleAvailable(RoleManager.ROLE_DIALER) == true) {
+                                                    val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                                                    roleLauncher.launch(intent)
+                                                } else {
+                                                    Toast.makeText(context, "Dialer role not available on this device", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
+                                                    putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+                                                }
+                                                roleLauncher.launch(intent)
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    onRequestOverlay = {
+                                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
+                                        context.startActivity(intent)
+                                    },
+                                    onToggleOverlay = { enabled ->
+                                        isOverlayEnabled.value = enabled
+                                        prefs.edit { putBoolean("is_overlay_enabled", enabled) }
+                                    },
+                                    onOpenAbout = { isShowingAboutScreen = true }
+                                )
                             }
-                        },
-                        onRequestOverlay = {
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
-                            context.startActivity(intent)
-                        },
-                        onToggleOverlay = { enabled ->
-                            isOverlayEnabled.value = enabled
-                            prefs.edit { putBoolean("is_overlay_enabled", enabled) }
                         }
-                    )
-                }
                     }
                 }
 
@@ -544,7 +552,10 @@ fun FrontDialerScreen(
                         icon = Icons.Default.History,
                         label = "RECENTS",
                         selected = currentTab == DialerTab.RECENTS,
-                        onClick = { currentTab = DialerTab.RECENTS }
+                        onClick = { 
+                            isShowingAboutScreen = false
+                            currentTab = DialerTab.RECENTS 
+                        }
                     )
 
                     // KEYPAD
@@ -552,7 +563,10 @@ fun FrontDialerScreen(
                         icon = Icons.Default.Dialpad,
                         label = "KEYPAD",
                         selected = currentTab == DialerTab.KEYPAD,
-                        onClick = { currentTab = DialerTab.KEYPAD }
+                        onClick = { 
+                            isShowingAboutScreen = false
+                            currentTab = DialerTab.KEYPAD 
+                        }
                     )
 
                     // CONTACTS
@@ -560,7 +574,10 @@ fun FrontDialerScreen(
                         icon = Icons.Default.Contacts,
                         label = "CONTACTS",
                         selected = currentTab == DialerTab.CONTACTS,
-                        onClick = { currentTab = DialerTab.CONTACTS }
+                        onClick = { 
+                            isShowingAboutScreen = false
+                            currentTab = DialerTab.CONTACTS 
+                        }
                     )
 
                     // RECORDINGS
@@ -568,7 +585,10 @@ fun FrontDialerScreen(
                         icon = Icons.Default.Mic,
                         label = "RECS",
                         selected = currentTab == DialerTab.RECORDINGS,
-                        onClick = { currentTab = DialerTab.RECORDINGS }
+                        onClick = { 
+                            isShowingAboutScreen = false
+                            currentTab = DialerTab.RECORDINGS 
+                        }
                     )
 
                     // SETTINGS
@@ -576,7 +596,13 @@ fun FrontDialerScreen(
                         icon = Icons.Default.Settings,
                         label = "SETTINGS",
                         selected = currentTab == DialerTab.SETTINGS,
-                        onClick = { currentTab = DialerTab.SETTINGS }
+                        onClick = { 
+                            if (currentTab == DialerTab.SETTINGS && isShowingAboutScreen) {
+                                isShowingAboutScreen = false
+                            } else {
+                                currentTab = DialerTab.SETTINGS 
+                            }
+                        }
                     )
                 }
             }
@@ -1536,7 +1562,8 @@ fun SettingsView(
     isOverlayEnabled: Boolean,
     onSetDefault: () -> Unit,
     onRequestOverlay: () -> Unit,
-    onToggleOverlay: (Boolean) -> Unit
+    onToggleOverlay: (Boolean) -> Unit,
+    onOpenAbout: () -> Unit
 ) {
     val context = LocalContext.current
     val isBatteryOptimized = remember { mutableStateOf(false) }
@@ -1676,6 +1703,84 @@ fun SettingsView(
                 contentDescription = null,
                 tint = if (!isBatteryOptimized.value) Color.Green else NothingRed,
                 modifier = Modifier.size(24.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // About Page Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(NothingButtonGlass)
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                .clickable { onOpenAbout() }
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(NothingSurface)
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = NothingRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "ABOUT NTHING DIALER",
+                            style = NothingDotTextStyle,
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingRed.copy(alpha = 0.2f))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "v3.0",
+                                style = NothingMonoTextStyle,
+                                color = NothingRed,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Text(
+                        text = "FEATURES, DEVELOPER PROFILE & SPECS",
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = "Open About",
+                tint = NothingLightGray,
+                modifier = Modifier.size(22.dp)
             )
         }
 
