@@ -682,12 +682,17 @@ fun CallHistoryOverlay(
     onDismiss: () -> Unit,
     onCall: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val filteredHistory = remember(recents, number) {
         val cleanTarget = number.filter { it.isDigit() }
         recents.filter { 
             it.number.filter { c -> c.isDigit() } == cleanTarget ||
             it.number.contains(number) || number.contains(it.number)
         }
+    }
+
+    val isUnsaved = remember(name, number) {
+        name.isBlank() || name.equals("Unknown", true) || name.equals("Unsaved", true) || name.equals("Unsaved Number", true) || name == number
     }
 
     Box(
@@ -707,9 +712,9 @@ fun CallHistoryOverlay(
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
                 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (name.isNotBlank() && !name.equals("Unsaved", true)) name.uppercase() else "HISTORY",
+                        text = if (!isUnsaved) name.uppercase() else "HISTORY",
                         style = NothingDotTextStyle,
                         color = Color.White,
                         fontSize = 18.sp
@@ -722,8 +727,29 @@ fun CallHistoryOverlay(
                     )
                 }
 
-                IconButton(onClick = { onCall(number) }) {
-                    Icon(Icons.Default.Call, contentDescription = "Call", tint = Color.Green)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isUnsaved) {
+                        IconButton(
+                            onClick = {
+                                val intent = Intent(Intent.ACTION_INSERT).apply {
+                                    type = ContactsContract.RawContacts.CONTENT_TYPE
+                                    putExtra(ContactsContract.Intents.Insert.PHONE, number)
+                                }
+                                context.startActivity(intent)
+                            },
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(NothingRed)
+                        ) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = "Save", tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    IconButton(onClick = { onCall(number) }) {
+                        Icon(Icons.Default.Call, contentDescription = "Call", tint = Color.Green)
+                    }
                 }
             }
 
@@ -1239,6 +1265,11 @@ fun RecentsView(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(filteredRecents) { recent ->
+                    val isUnsaved = remember(recent.name, recent.number) {
+                        val n = recent.name.trim()
+                        n.isBlank() || n.equals("Unknown", true) || n.equals("Unsaved", true) || n == recent.number.trim()
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1292,36 +1323,6 @@ fun RecentsView(
                                         modifier = Modifier.size(10.dp)
                                     )
                                     
-                                    // ADD CONTACT BUTTON for unsaved numbers
-                                    val isUnsaved = remember(recent.name, recent.number) {
-                                        val n = recent.name.trim()
-                                        n.isBlank() || n.equals("Unknown", true) || n == recent.number.trim()
-                                    }
-                                    
-                                    if (isUnsaved) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .background(NothingRed)
-                                                .clickable {
-                                                    val intent = Intent(Intent.ACTION_INSERT).apply {
-                                                        type = "vnd.android.cursor.dir/contact"
-                                                        putExtra(ContactsContract.Intents.Insert.PHONE, recent.number)
-                                                    }
-                                                    context.startActivity(intent)
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PersonAdd,
-                                                contentDescription = "Save",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    }
-
                                     Text(
                                         text = recent.number,
                                         style = NothingMonoTextStyle,
@@ -1360,6 +1361,31 @@ fun RecentsView(
                             horizontalArrangement = Arrangement.End,
                             modifier = Modifier.padding(start = 8.dp)
                         ) {
+                            if (isUnsaved) {
+                                IconButton(
+                                    onClick = {
+                                        val intent = Intent(Intent.ACTION_INSERT).apply {
+                                            type = "vnd.android.cursor.dir/contact"
+                                            putExtra(ContactsContract.Intents.Insert.PHONE, recent.number)
+                                        }
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(NothingRed)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PersonAdd,
+                                        contentDescription = "Save",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+
                             IconButton(
                                 onClick = { onToggleBlock(recent.number) },
                                 modifier = Modifier.size(32.dp)
@@ -1849,6 +1875,7 @@ fun ContactsView(
     onSeeHistory: (String, String) -> Unit,
     onRefresh: () -> Unit
 ) {
+    val context = LocalContext.current
     val filteredContacts = remember(contacts, searchQuery, activeFilter, blockedNumbers) {
         val base = contacts.filter {
             it.name.contains(searchQuery, ignoreCase = true) || it.number.contains(searchQuery)
@@ -2090,57 +2117,141 @@ fun ContactsView(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = { onToggleFavorite(contact) },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.05f))
-                            ) {
-                                Icon(
-                                    imageVector = if (contact.favorite) Icons.Default.Star else Icons.Default.StarBorder,
-                                    contentDescription = "Favorite",
-                                    tint = if (contact.favorite) NothingRed else NothingLightGray,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                            var showMenu by remember { mutableStateOf(false) }
+                            val isBlocked = blockedNumbers.contains(contact.number.replace("\\D".toRegex(), ""))
+
+                            Box {
+                                IconButton(
+                                    onClick = { showMenu = true },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.05f))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "More",
+                                        tint = NothingLightGray,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false },
+                                    modifier = Modifier
+                                        .background(NothingSurface)
+                                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Text(
+                                                if (contact.favorite) "REMOVE FROM FAV" else "ADD TO FAVOURITE",
+                                                style = NothingMonoTextStyle,
+                                                fontSize = 11.sp,
+                                                color = if (contact.favorite) NothingRed else Color.White
+                                            ) 
+                                        },
+                                        onClick = {
+                                            onToggleFavorite(contact)
+                                            showMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (contact.favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                                contentDescription = null,
+                                                tint = if (contact.favorite) NothingRed else Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+                                    
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Text(
+                                                if (isBlocked) "UNBLOCK CONTACT" else "BLOCK CONTACT",
+                                                style = NothingMonoTextStyle,
+                                                fontSize = 11.sp,
+                                                color = if (isBlocked) NothingRed else Color.White
+                                            ) 
+                                        },
+                                        onClick = {
+                                            onToggleBlock(contact.number)
+                                            showMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Block,
+                                                contentDescription = null,
+                                                tint = if (isBlocked) NothingRed else Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+
+                                    DropdownMenuItem(
+                                        text = { Text("CALL HISTORY", style = NothingMonoTextStyle, fontSize = 11.sp, color = Color.White) },
+                                        onClick = {
+                                            onSeeHistory(contact.number, contact.name)
+                                            showMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.History,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+
+                                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+
+                                    DropdownMenuItem(
+                                        text = { Text("SHARE (TEXT)", style = NothingMonoTextStyle, fontSize = 11.sp, color = Color.White) },
+                                        onClick = {
+                                            val shareText = "Name: ${contact.name}\nNumber: ${contact.number}"
+                                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                            }
+                                            context.startActivity(Intent.createChooser(intent, "Share Contact"))
+                                            showMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Share,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+
+                                    DropdownMenuItem(
+                                        text = { Text("SHARE (VCARD)", style = NothingMonoTextStyle, fontSize = 11.sp, color = Color.White) },
+                                        onClick = {
+                                            val vCard = "BEGIN:VCARD\nVERSION:3.0\nFN:${contact.name}\nTEL;TYPE=CELL:${contact.number}\nEND:VCARD"
+                                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/x-vcard"
+                                                putExtra(Intent.EXTRA_TEXT, vCard)
+                                            }
+                                            context.startActivity(Intent.createChooser(intent, "Share VCard"))
+                                            showMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.ContactPage,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+                                }
                             }
 
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            IconButton(
-                                onClick = { onToggleBlock(contact.number) },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.05f))
-                            ) {
-                                val isBlocked = blockedNumbers.contains(contact.number.replace("\\D".toRegex(), ""))
-                                Icon(
-                                    imageVector = Icons.Default.Block,
-                                    contentDescription = "Block",
-                                    tint = if (isBlocked) NothingRed else NothingLightGray,
-                                    modifier = Modifier.size(16.dp).alpha(if (isBlocked) 1f else 0.4f)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            IconButton(
-                                onClick = { onSeeHistory(contact.number, contact.name) },
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.05f))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.History,
-                                    contentDescription = "History",
-                                    tint = NothingLightGray,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
 
                             IconButton(
                                 onClick = { onCallItem(contact) },

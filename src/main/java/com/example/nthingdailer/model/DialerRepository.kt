@@ -159,6 +159,8 @@ class DialerRepository(private val context: Context) {
             CallLog.Calls.DURATION
         )
 
+        val contacts = fetchContacts()
+
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             projection,
@@ -178,11 +180,22 @@ class DialerRepository(private val context: Context) {
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIndex)
-                val name = cursor.getString(nameIndex) ?: "Unknown"
+                val cachedName = cursor.getString(nameIndex)
                 val number = cursor.getString(numberIndex) ?: ""
                 val typeInt = cursor.getInt(typeIndex)
                 val dateLong = cursor.getLong(dateIndex)
                 val durationSeconds = cursor.getLong(durationIndex)
+
+                // SMART NAME LOOKUP: If cached name is generic, check our fresh contact list
+                val name = if (cachedName.isNullOrBlank() || cachedName.equals("Unknown", true) || cachedName.equals("Unsaved", true)) {
+                    val cleanNum = number.replace("\\D".toRegex(), "")
+                    contacts.find { 
+                        val cNum = it.number.replace("\\D".toRegex(), "")
+                        cNum != "" && (cNum == cleanNum || cleanNum.endsWith(cNum) || cNum.endsWith(cleanNum))
+                    }?.name ?: "Unknown"
+                } else {
+                    cachedName
+                }
 
                 // Look for associated recording
                 var recordingPath: String? = null
