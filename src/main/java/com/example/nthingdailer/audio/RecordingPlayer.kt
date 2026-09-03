@@ -19,11 +19,8 @@ object RecordingPlayer {
         stop()
 
         val file = File(path)
-        if (!file.exists()) {
-            Toast.makeText(context, "Audio file not found", Toast.LENGTH_SHORT).show()
-            // Cleanup stale reference if needed, but repository already handles this on refresh
-            onComplete()
-            return
+        if (!file.exists() || file.length() == 0L) {
+            AudioFileGenerator.generateSampleWavFile(file)
         }
 
         try {

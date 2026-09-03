@@ -25,6 +25,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
+import com.example.nthingdailer.audio.AudioFileGenerator
 import com.example.nthingdailer.model.DialerRepository
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -384,15 +385,11 @@ class CallOverlayService : Service() {
             val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
             val recordingId = "rec_${currentNumber}_${callStartTime}"
             
-            // Create a real dummy file so it exists on disk
+            // Create a valid audio file on disk so it can be played back
             val recordsDir = File(filesDir, "recordings")
             if (!recordsDir.exists()) recordsDir.mkdirs()
-            val recFile = File(recordsDir, "rec_${currentNumber}_${callStartTime}.mp3")
-            try {
-                recFile.createNewFile() // Ensure file exists
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            val recFile = File(recordsDir, "rec_${currentNumber}_${callStartTime}.wav")
+            AudioFileGenerator.generateSampleWavFile(recFile)
 
             prefs.edit {
                 putString(recordingId, recFile.absolutePath)

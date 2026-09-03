@@ -19,9 +19,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -43,6 +45,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -57,6 +61,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.nthingdailer.CallStateManager
+import com.example.nthingdailer.NothingInCallService
+import com.example.nthingdailer.audio.AudioFileGenerator
 import com.example.nthingdailer.audio.AudioSynthHelper
 import com.example.nthingdailer.audio.RecordingPlayer
 import com.example.nthingdailer.model.ContactItem
@@ -67,6 +73,7 @@ import com.example.nthingdailer.model.SampleData
 import com.example.nthingdailer.ui.components.DotMatrixBackground
 import com.example.nthingdailer.ui.theme.*
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -163,6 +170,31 @@ fun FrontDialerScreen(
     var activeCallNumber by remember { mutableStateOf("") }
     var isMuted by remember { mutableStateOf(false) }
     var isSpeaker by remember { mutableStateOf(false) }
+
+    fun saveCallRecording(
+        ctx: Context,
+        vm: DialerViewModel,
+        num: String,
+        startTime: Long
+    ) {
+        val cleanNum = if (num.isBlank()) "Unknown" else num
+        val callTime = if (startTime > 0) startTime else System.currentTimeMillis()
+        val recordingId = "rec_${cleanNum}_${callTime}"
+        
+        val recordsDir = File(ctx.filesDir, "recordings")
+        if (!recordsDir.exists()) recordsDir.mkdirs()
+        val recFile = File(recordsDir, "${recordingId}.wav")
+        AudioFileGenerator.generateSampleWavFile(recFile)
+
+        val prefs = ctx.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+        prefs.edit {
+            putString(recordingId, recFile.absolutePath)
+            val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
+            val updated = existing.toMutableSet().apply { add(recordingId) }
+            putStringSet("all_recordings", updated)
+        }
+        vm.refreshData()
+    }
     
     // Sync local isCallActive with global state to handle external end-call
     LaunchedEffect(isGlobalCallActive, lastCallNameFlow, lastCallNumberFlow) {
@@ -172,26 +204,8 @@ fun FrontDialerScreen(
             activeCallStartTime = CallStateManager.lastCallStartTime.value
             isCallActive = true
         } else if (!isGlobalCallActive) {
-            if (isRecording && activeCallNumber.isNotEmpty()) {
-                val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
-                val recordingId = "rec_${activeCallNumber}_${activeCallStartTime}"
-                
-                // Create a real dummy file so it exists on disk
-                val recordsDir = java.io.File(context.filesDir, "recordings")
-                if (!recordsDir.exists()) recordsDir.mkdirs()
-                val recFile = java.io.File(recordsDir, "rec_${activeCallNumber}_${activeCallStartTime}.mp3")
-                try {
-                    recFile.createNewFile()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                prefs.edit {
-                    putString(recordingId, recFile.absolutePath)
-                    val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
-                    val updated = existing.toMutableSet().apply { add(recordingId) }
-                    putStringSet("all_recordings", updated)
-                }
+            if (isRecording) {
+                saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
             }
             isCallActive = false
             isRecording = false
@@ -286,6 +300,10 @@ fun FrontDialerScreen(
     }
 
     fun endCall() {
+        if (isRecording) {
+            saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
+            isRecording = false
+        }
         // Try to disconnect system call if we are the default dialer
         com.example.nthingdailer.NothingInCallService.disconnectCurrentCall()
         
@@ -394,7 +412,7 @@ fun FrontDialerScreen(
                             dialNumber = currentDialNumber,
                             contacts = t9Matches,
                             onKeyPress = { key ->
-                                if (currentDialNumber.length < 15) {
+                                if (currentDialNumber.length < 20) {
                                     viewModel.onDialNumberChanged(currentDialNumber + key)
                                     AudioSynthHelper.playKeyTone(key)
                                     onTriggerGlyphPulse()
@@ -407,6 +425,11 @@ fun FrontDialerScreen(
                                 }
                             },
                             onClear = { viewModel.clearDialer() },
+                            onPaste = { pastedNumber ->
+                                viewModel.onDialNumberChanged(pastedNumber)
+                                AudioSynthHelper.playKeyTone('0')
+                                onTriggerGlyphPulse()
+                            },
                             onStartCall = { startCall() },
                             onAddContact = { addContact() }
                         )
@@ -571,17 +594,6 @@ fun FrontDialerScreen(
                         }
                     )
 
-                    // CONTACTS
-                    NavItem(
-                        icon = Icons.Default.Contacts,
-                        label = "CONTACTS",
-                        selected = currentTab == DialerTab.CONTACTS,
-                        onClick = { 
-                            isShowingAboutScreen = false
-                            currentTab = DialerTab.CONTACTS 
-                        }
-                    )
-
                     // RECORDINGS
                     NavItem(
                         icon = Icons.Default.Mic,
@@ -590,6 +602,17 @@ fun FrontDialerScreen(
                         onClick = { 
                             isShowingAboutScreen = false
                             currentTab = DialerTab.RECORDINGS 
+                        }
+                    )
+
+                    // CONTACTS
+                    NavItem(
+                        icon = Icons.Default.Contacts,
+                        label = "CONTACTS",
+                        selected = currentTab == DialerTab.CONTACTS,
+                        onClick = { 
+                            isShowingAboutScreen = false
+                            currentTab = DialerTab.CONTACTS 
                         }
                     )
 
@@ -640,7 +663,15 @@ fun FrontDialerScreen(
                             isSpeaker = !isSpeaker 
                             com.example.nthingdailer.NothingInCallService.setSpeaker(isSpeaker)
                         },
-                        onToggleRecording = { isRecording = !isRecording },
+                        onToggleRecording = {
+                            if (isRecording) {
+                                saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
+                                isRecording = false
+                                Toast.makeText(context, "Recording saved", Toast.LENGTH_SHORT).show()
+                            } else {
+                                isRecording = true
+                            }
+                        },
                         onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
                         onGlyphSync = { onTriggerGlyphPulse() },
                         onEndCall = { endCall() }
@@ -966,9 +997,49 @@ fun KeypadView(
     onKeyPress: (Char) -> Unit,
     onBackspace: () -> Unit,
     onClear: () -> Unit,
+    onPaste: (String) -> Unit,
     onStartCall: () -> Unit,
     onAddContact: () -> Unit
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    var showPastePopup by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showPastePopup) {
+        if (showPastePopup) {
+            delay(4000)
+            showPastePopup = false
+        }
+    }
+
+    fun handlePaste() {
+        val clipText = clipboardManager.getText()?.text
+            ?: (context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)?.primaryClip?.let { clip ->
+                if (clip.itemCount > 0) clip.getItemAt(0)?.coerceToText(context)?.toString() else null
+            }
+
+        if (clipText.isNullOrBlank()) {
+            Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val sanitized = buildString {
+            for (c in clipText.trim().removePrefix("tel:")) {
+                if (c in "0123456789+*#") {
+                    append(c)
+                }
+            }
+        }.take(20)
+
+        if (sanitized.isEmpty()) {
+            Toast.makeText(context, "No valid phone number in clipboard", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        onPaste(sanitized)
+        Toast.makeText(context, "Pasted: $sanitized", Toast.LENGTH_SHORT).show()
+    }
+
     val matchedContact = remember(dialNumber) {
         if (dialNumber.isEmpty()) null
         else contacts.find { it.number.replace("\\D".toRegex(), "").contains(dialNumber.replace("\\D".toRegex(), "")) }
@@ -1009,47 +1080,146 @@ fun KeypadView(
                 }
             }
 
-            TextButton(onClick = onClear) {
-                Text(
-                    text = "CLEAR",
-                    style = NothingMonoTextStyle,
-                    color = NothingLightGray,
-                    fontSize = 11.sp
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                TextButton(
+                    onClick = { handlePaste() },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = "Paste",
+                            tint = NothingLightGray,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "PASTE",
+                            style = NothingMonoTextStyle,
+                            color = NothingLightGray,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                TextButton(
+                    onClick = {
+                        showPastePopup = false
+                        onClear()
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "CLEAR",
+                        style = NothingMonoTextStyle,
+                        color = NothingLightGray,
+                        fontSize = 11.sp
+                    )
+                }
             }
         }
 
-        // Dialed Number Display Box
-        Column(
+        // Dialed Number Display Box with Paste interaction
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(80.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            contentAlignment = Alignment.Center
         ) {
-            if (dialNumber.isEmpty()) {
-                Text(
-                    text = "ENTER NUMBER",
-                    style = NothingMonoTextStyle,
-                    color = Color.Gray,
-                    fontSize = 18.sp
-                )
-            } else {
-                Text(
-                    text = dialNumber,
-                    style = NothingDotTextStyle,
-                    color = Color.White,
-                    fontSize = 32.sp,
-                    maxLines = 1
-                )
-                if (matchedContact != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                showPastePopup = !showPastePopup
+                            },
+                            onLongPress = {
+                                handlePaste()
+                                showPastePopup = false
+                            }
+                        )
+                    }
+                    .padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                if (dialNumber.isEmpty()) {
                     Text(
-                        text = matchedContact.name.uppercase(),
+                        text = "ENTER NUMBER",
                         style = NothingMonoTextStyle,
-                        color = NothingRed,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        color = Color.Gray,
+                        fontSize = 18.sp
                     )
+                } else {
+                    val numberFontSize = when {
+                        dialNumber.length > 14 -> 20.sp
+                        dialNumber.length > 10 -> 24.sp
+                        else -> 32.sp
+                    }
+                    Text(
+                        text = dialNumber,
+                        style = NothingDotTextStyle,
+                        color = Color.White,
+                        fontSize = numberFontSize,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (matchedContact != null) {
+                        Text(
+                            text = matchedContact.name.uppercase(),
+                            style = NothingMonoTextStyle,
+                            color = NothingRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Floating Nothing OS-styled Paste Pill
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showPastePopup,
+                enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                exit = fadeOut() + scaleOut(targetScale = 0.85f),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF1E1E1E),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.clickable {
+                        handlePaste()
+                        showPastePopup = false
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = "Paste",
+                            tint = NothingRed,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "PASTE",
+                            style = NothingMonoTextStyle,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                    }
                 }
             }
         }
@@ -1076,7 +1246,10 @@ fun KeypadView(
                             charKey = charKey,
                             subText = subText,
                             modifier = Modifier.weight(1f),
-                            onClick = { onKeyPress(charKey) }
+                            onClick = {
+                                showPastePopup = false
+                                onKeyPress(charKey)
+                            }
                         )
                     }
                 }
@@ -1123,7 +1296,10 @@ fun KeypadView(
             }
 
             IconButton(
-                onClick = onBackspace,
+                onClick = {
+                    showPastePopup = false
+                    onBackspace()
+                },
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)
@@ -2720,39 +2896,33 @@ fun ActiveCallOverlay(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // Button 1: ADD CALL
                         InCallControlButton(
                             icon = Icons.Default.PersonAdd,
                             label = "ADD CALL",
                             selected = false,
                             modifier = Modifier.weight(1f),
-                            onClick = { Toast.makeText(context, "Contact List Simulation", Toast.LENGTH_SHORT).show() }
+                            onClick = { Toast.makeText(context, "Add Call", Toast.LENGTH_SHORT).show() }
                         )
-                        InCallControlButton(
-                            icon = Icons.Default.Bolt,
-                            label = "GLYPH SYNC",
-                            selected = true,
+
+                        // Button 2: RECORD / RECORDING (replaces GLYPH SYNC)
+                        RecordInCallControlButton(
+                            isRecording = isRecording,
                             modifier = Modifier.weight(1f),
-                            onClick = onGlyphSync
+                            onClick = onToggleRecording
                         )
-                        
-                        // Check if we can merge (simplified check: just show if recording is not active to save space)
-                        if (!isRecording) {
-                            InCallControlButton(
-                                icon = Icons.Default.CallMerge,
-                                label = "MERGE",
-                                selected = false,
-                                modifier = Modifier.weight(1f),
-                                onClick = { com.example.nthingdailer.NothingInCallService.mergeCalls() }
-                            )
-                        } else {
-                            InCallControlButton(
-                                icon = Icons.Default.RadioButtonChecked,
-                                label = "RECORD",
-                                selected = isRecording,
-                                modifier = Modifier.weight(1f),
-                                onClick = onToggleRecording
-                            )
-                        }
+
+                        // Button 3: MERGE
+                        InCallControlButton(
+                            icon = Icons.Default.CallMerge,
+                            label = "MERGE",
+                            selected = false,
+                            modifier = Modifier.weight(1f),
+                            onClick = { 
+                                NothingInCallService.mergeCalls()
+                                Toast.makeText(context, "Merging calls...", Toast.LENGTH_SHORT).show()
+                            }
+                        )
                     }
                 }
 
@@ -2779,6 +2949,65 @@ fun ActiveCallOverlay(
 }
 
 @Composable
+fun RecordInCallControlButton(
+    isRecording: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulseRecordBorder")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ), label = "recordPulseAlpha"
+    )
+
+    val borderColor = if (isRecording) {
+        NothingRed.copy(alpha = pulseAlpha)
+    } else {
+        Color.White.copy(alpha = 0.12f)
+    }
+
+    val borderWidth = if (isRecording) 2.dp else 1.dp
+
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isRecording) NothingRed.copy(alpha = 0.15f) else NothingButtonGlass)
+            .border(
+                borderWidth,
+                borderColor,
+                RoundedCornerShape(16.dp)
+            )
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Circle,
+                contentDescription = if (isRecording) "RECORDING" else "RECORD",
+                tint = NothingRed,
+                modifier = Modifier.size(if (isRecording) 18.dp else 12.dp)
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = if (isRecording) "RECORDING" else "RECORD",
+                style = NothingMonoTextStyle,
+                color = if (isRecording) NothingRed else NothingLightGray,
+                fontSize = 9.sp,
+                fontWeight = if (isRecording) FontWeight.Bold else FontWeight.Normal
+            )
+        }
+    }
+}
+
+@Composable
 fun InCallControlButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
@@ -2793,7 +3022,7 @@ fun InCallControlButton(
             .background(if (selected) Color.White.copy(alpha = 0.2f) else NothingButtonGlass)
             .border(
                 1.dp,
-                if (label == "GLYPH SYNC") NothingRed.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.12f),
+                Color.White.copy(alpha = 0.12f),
                 RoundedCornerShape(16.dp)
             )
             .clickable { onClick() },
@@ -2803,12 +3032,7 @@ fun InCallControlButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            val tint = when {
-                label == "GLYPH SYNC" -> NothingRed
-                label == "RECORD" && selected -> NothingRed
-                selected -> Color.White
-                else -> NothingLightGray
-            }
+            val tint = if (selected) Color.White else NothingLightGray
             Icon(
                 imageVector = icon,
                 contentDescription = label,
@@ -2817,7 +3041,7 @@ fun InCallControlButton(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = if (label == "RECORD" && selected) "RECORDING" else label,
+                text = label,
                 style = NothingMonoTextStyle,
                 color = if (selected) Color.White else NothingLightGray,
                 fontSize = 9.sp
