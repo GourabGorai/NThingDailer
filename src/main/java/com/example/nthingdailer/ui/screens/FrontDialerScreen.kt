@@ -60,10 +60,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.nthingdailer.CallOverlayService
 import com.example.nthingdailer.CallStateManager
 import com.example.nthingdailer.NothingInCallService
 import com.example.nthingdailer.audio.AudioFileGenerator
 import com.example.nthingdailer.audio.AudioSynthHelper
+import com.example.nthingdailer.audio.CallAudioRecorder
 import com.example.nthingdailer.audio.RecordingPlayer
 import com.example.nthingdailer.model.ContactItem
 import com.example.nthingdailer.model.DialerViewModel
@@ -183,12 +185,16 @@ fun FrontDialerScreen(
         
         val recordsDir = File(ctx.filesDir, "recordings")
         if (!recordsDir.exists()) recordsDir.mkdirs()
-        val recFile = File(recordsDir, "${recordingId}.wav")
-        AudioFileGenerator.generateSampleWavFile(recFile)
+        val defaultFile = File(recordsDir, "${recordingId}.m4a")
+
+        val savedFile = CallAudioRecorder.stopRecording() ?: defaultFile
+        if (!savedFile.exists() || savedFile.length() == 0L) {
+            AudioFileGenerator.generateSampleWavFile(savedFile)
+        }
 
         val prefs = ctx.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
         prefs.edit {
-            putString(recordingId, recFile.absolutePath)
+            putString(recordingId, savedFile.absolutePath)
             val existing = prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()
             val updated = existing.toMutableSet().apply { add(recordingId) }
             putStringSet("all_recordings", updated)
@@ -240,14 +246,26 @@ fun FrontDialerScreen(
         }
     }
 
-    // Call Timer Effect
+    // Call Timer & Disconnect Handler Effect
     LaunchedEffect(isCallActive, currentCallState) {
         if (isCallActive) {
             when (currentCallState) {
                 Call.STATE_ACTIVE -> {
                     callStatusHeading = "CALL IN PROGRESS"
-                    // If it just became active, ensure it starts from zero
-                    // Note: In a real app, you might want to fetch call duration from system details
+                    
+                    // Auto-start recording if enabled in settings
+                    val prefs = context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE)
+                    val isAutoRecord = prefs.getBoolean("auto_call_recording", false)
+                    if (isAutoRecord && !isRecording) {
+                        val cleanNum = if (activeCallNumber.isBlank()) "Unknown" else activeCallNumber
+                        val callTime = if (activeCallStartTime > 0) activeCallStartTime else System.currentTimeMillis()
+                        val recordsDir = File(context.filesDir, "recordings")
+                        val recFile = File(recordsDir, "rec_${cleanNum}_${callTime}.m4a")
+                        CallAudioRecorder.startRecording(context, recFile)
+                        isRecording = true
+                        Toast.makeText(context, "Auto-recording started...", Toast.LENGTH_SHORT).show()
+                    }
+
                     while (isCallActive && currentCallState == Call.STATE_ACTIVE) {
                         delay(1000)
                         callSeconds++
@@ -262,11 +280,25 @@ fun FrontDialerScreen(
                     callStatusHeading = "DIALING..."
                 }
                 Call.STATE_DISCONNECTED -> {
+                    if (isRecording) {
+                        saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
+                        isRecording = false
+                    }
                     callStatusHeading = "CALL ENDED"
+                    delay(1200)
+                    isCallActive = false
                 }
             }
         } else {
             callSeconds = 0
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isRecording) {
+                CallAudioRecorder.stopRecording()
+            }
         }
     }
 
@@ -288,15 +320,18 @@ fun FrontDialerScreen(
         // Refresh recents after a short delay to show the new call
         viewModel.refreshData()
         
-        // Update manager for overlay lookup
-        CallStateManager.updateCallState(true, nameToCall, numToCall)
+        // Update manager for overlay lookup with DIALING state initially
+        CallStateManager.updateCallState(true, nameToCall, numToCall, Call.STATE_DIALING)
 
-        // EXPLICITLY start the overlay service with name and number for outgoing calls
-        val overlayIntent = Intent(context, com.example.nthingdailer.CallOverlayService::class.java).apply {
-            putExtra("number", numToCall)
-            putExtra("name", nameToCall)
+        // ONLY start the overlay popup service if app is NOT set as default dialer
+        if (!isDefaultDialer()) {
+            val overlayIntent = Intent(context, CallOverlayService::class.java).apply {
+                putExtra("number", numToCall)
+                putExtra("name", nameToCall)
+                putExtra("state", Call.STATE_DIALING)
+            }
+            context.startService(overlayIntent)
         }
-        context.startService(overlayIntent)
     }
 
     fun endCall() {
@@ -514,6 +549,7 @@ fun FrontDialerScreen(
                                 val isDefault = remember { mutableStateOf(isDefaultDialer()) }
                                 val prefs = remember { context.getSharedPreferences("nthing_prefs", Context.MODE_PRIVATE) }
                                 val isOverlayEnabled = remember { mutableStateOf(prefs.getBoolean("is_overlay_enabled", true)) }
+                                val isAutoRecordEnabled = remember { mutableStateOf(prefs.getBoolean("auto_call_recording", false)) }
 
                                 LaunchedEffect(Unit) {
                                     while(true) {
@@ -527,6 +563,7 @@ fun FrontDialerScreen(
                                     isDefault = isDefault.value,
                                     hasOverlay = hasOverlayPermission.value,
                                     isOverlayEnabled = isOverlayEnabled.value,
+                                    isAutoRecordEnabled = isAutoRecordEnabled.value,
                                     onSetDefault = {
                                         try {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -554,6 +591,10 @@ fun FrontDialerScreen(
                                     onToggleOverlay = { enabled ->
                                         isOverlayEnabled.value = enabled
                                         prefs.edit { putBoolean("is_overlay_enabled", enabled) }
+                                    },
+                                    onToggleAutoRecord = { enabled ->
+                                        isAutoRecordEnabled.value = enabled
+                                        prefs.edit { putBoolean("auto_call_recording", enabled) }
                                     },
                                     onOpenAbout = { isShowingAboutScreen = true }
                                 )
@@ -655,21 +696,32 @@ fun FrontDialerScreen(
                         isSpeaker = isSpeaker,
                         isRecording = isRecording,
                         isKeypadVisible = isKeypadVisible,
+                        isCallConnected = currentCallState == Call.STATE_ACTIVE,
                         onToggleMute = { 
                             isMuted = !isMuted
-                            com.example.nthingdailer.NothingInCallService.setMuted(isMuted)
+                            NothingInCallService.setMuted(isMuted)
                         },
                         onToggleSpeaker = { 
                             isSpeaker = !isSpeaker 
-                            com.example.nthingdailer.NothingInCallService.setSpeaker(isSpeaker)
+                            NothingInCallService.setSpeaker(isSpeaker)
                         },
                         onToggleRecording = {
-                            if (isRecording) {
-                                saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
-                                isRecording = false
-                                Toast.makeText(context, "Recording saved", Toast.LENGTH_SHORT).show()
+                            if (currentCallState != Call.STATE_ACTIVE) {
+                                Toast.makeText(context, "Recording will be available once call is answered", Toast.LENGTH_SHORT).show()
                             } else {
-                                isRecording = true
+                                if (isRecording) {
+                                    saveCallRecording(context, viewModel, activeCallNumber, activeCallStartTime)
+                                    isRecording = false
+                                    Toast.makeText(context, "Recording saved", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val cleanNum = if (activeCallNumber.isBlank()) "Unknown" else activeCallNumber
+                                    val callTime = if (activeCallStartTime > 0) activeCallStartTime else System.currentTimeMillis()
+                                    val recordsDir = File(context.filesDir, "recordings")
+                                    val recFile = File(recordsDir, "rec_${cleanNum}_${callTime}.m4a")
+                                    CallAudioRecorder.startRecording(context, recFile)
+                                    isRecording = true
+                                    Toast.makeText(context, "Call recording started...", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         },
                         onToggleKeypad = { isKeypadVisible = !isKeypadVisible },
@@ -1764,9 +1816,11 @@ fun SettingsView(
     isDefault: Boolean,
     hasOverlay: Boolean,
     isOverlayEnabled: Boolean,
+    isAutoRecordEnabled: Boolean,
     onSetDefault: () -> Unit,
     onRequestOverlay: () -> Unit,
     onToggleOverlay: (Boolean) -> Unit,
+    onToggleAutoRecord: (Boolean) -> Unit,
     onOpenAbout: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1867,6 +1921,41 @@ fun SettingsView(
                     if (!hasOverlay) onRequestOverlay() 
                     else onToggleOverlay(!isOverlayEnabled)
                 }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Auto Call Recording Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(NothingButtonGlass)
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                .clickable { onToggleAutoRecord(!isAutoRecordEnabled) }
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "AUTO CALL RECORDING",
+                    style = NothingDotTextStyle,
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = if (isAutoRecordEnabled) "RECORD CALLS AUTOMATICALLY WHEN CONNECTED" else "AUTO RECORDING IS DISABLED",
+                    style = NothingMonoTextStyle,
+                    color = if (isAutoRecordEnabled) Color.Green else NothingLightGray,
+                    fontSize = 10.sp
+                )
+            }
+
+            NothingToggle(
+                checked = isAutoRecordEnabled,
+                onCheckedChange = { onToggleAutoRecord(it) }
             )
         }
 
@@ -2656,11 +2745,12 @@ fun ActiveCallOverlay(
     isSpeaker: Boolean,
     isRecording: Boolean,
     isKeypadVisible: Boolean,
+    isCallConnected: Boolean = true,
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
     onToggleRecording: () -> Unit,
     onToggleKeypad: () -> Unit,
-    onGlyphSync: () -> Unit,
+    onGlyphSync: () -> Unit = {},
     onEndCall: () -> Unit
 ) {
     val context = LocalContext.current
@@ -2908,6 +2998,7 @@ fun ActiveCallOverlay(
                         // Button 2: RECORD / RECORDING (replaces GLYPH SYNC)
                         RecordInCallControlButton(
                             isRecording = isRecording,
+                            isCallConnected = isCallConnected,
                             modifier = Modifier.weight(1f),
                             onClick = onToggleRecording
                         )
@@ -2951,6 +3042,7 @@ fun ActiveCallOverlay(
 @Composable
 fun RecordInCallControlButton(
     isRecording: Boolean,
+    isCallConnected: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -2964,24 +3056,26 @@ fun RecordInCallControlButton(
         ), label = "recordPulseAlpha"
     )
 
-    val borderColor = if (isRecording) {
+    val isActuallyRecording = isRecording && isCallConnected
+    val borderColor = if (isActuallyRecording) {
         NothingRed.copy(alpha = pulseAlpha)
     } else {
         Color.White.copy(alpha = 0.12f)
     }
 
-    val borderWidth = if (isRecording) 2.dp else 1.dp
+    val borderWidth = if (isActuallyRecording) 2.dp else 1.dp
 
     Box(
         modifier = modifier
             .height(56.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(if (isRecording) NothingRed.copy(alpha = 0.15f) else NothingButtonGlass)
+            .background(if (isActuallyRecording) NothingRed.copy(alpha = 0.15f) else NothingButtonGlass)
             .border(
                 borderWidth,
                 borderColor,
                 RoundedCornerShape(16.dp)
             )
+            .alpha(if (isCallConnected) 1f else 0.5f)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -2990,18 +3084,18 @@ fun RecordInCallControlButton(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Circle,
-                contentDescription = if (isRecording) "RECORDING" else "RECORD",
+                imageVector = if (isActuallyRecording) Icons.Default.Stop else Icons.Default.Circle,
+                contentDescription = if (isActuallyRecording) "RECORDING" else "RECORD",
                 tint = NothingRed,
-                modifier = Modifier.size(if (isRecording) 18.dp else 12.dp)
+                modifier = Modifier.size(if (isActuallyRecording) 18.dp else 12.dp)
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = if (isRecording) "RECORDING" else "RECORD",
+                text = if (isActuallyRecording) "RECORDING" else "RECORD",
                 style = NothingMonoTextStyle,
-                color = if (isRecording) NothingRed else NothingLightGray,
+                color = if (isActuallyRecording) NothingRed else NothingLightGray,
                 fontSize = 9.sp,
-                fontWeight = if (isRecording) FontWeight.Bold else FontWeight.Normal
+                fontWeight = if (isActuallyRecording) FontWeight.Bold else FontWeight.Normal
             )
         }
     }

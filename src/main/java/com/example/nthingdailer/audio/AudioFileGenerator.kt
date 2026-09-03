@@ -6,10 +6,11 @@ import java.io.FileOutputStream
 object AudioFileGenerator {
 
     /**
-     * Generates a valid 16-bit PCM Mono 44.1kHz WAV audio file with a synthesized
-     * audio tone sequence so that MediaPlayer can play call recordings without error.
+     * Generates a valid 16-bit PCM Mono 44.1kHz WAV audio file with a loud, clear,
+     * synthesized call voice tone sequence so that MediaPlayer can play call recordings
+     * clearly at full audible volume.
      */
-    fun generateSampleWavFile(file: File, durationSeconds: Int = 3) {
+    fun generateSampleWavFile(file: File, durationSeconds: Int = 5) {
         try {
             val sampleRate = 44100
             val numSamples = sampleRate * durationSeconds
@@ -85,18 +86,23 @@ object AudioFileGenerator {
 
             FileOutputStream(file).use { fos ->
                 fos.write(header)
-                val buffer = ByteArray(1024)
+                val buffer = ByteArray(2048)
                 var bufferIndex = 0
                 
-                val freq = 440.0 // 440 Hz tone
-                val twoPiF = 2.0 * Math.PI * freq
+                val f1 = 523.25 // C5 note (clear audible tone)
+                val f2 = 659.25 // E5 note
+                val twoPiF1 = 2.0 * Math.PI * f1
+                val twoPiF2 = 2.0 * Math.PI * f2
                 
                 for (i in 0 until numSamples) {
                     val timeInSec = i.toDouble() / sampleRate
-                    val cycleTime = timeInSec % 1.0
-                    val volume = if (cycleTime < 0.15 || (cycleTime in 0.25..0.4)) 0.25 else 0.0
+                    val cycleTime = timeInSec % 1.2
                     
-                    val sampleVal = (Math.sin(twoPiF * timeInSec) * 32767 * volume).toInt().coerceIn(-32768, 32767)
+                    val activePulse = cycleTime < 0.25 || (cycleTime in 0.35..0.6)
+                    val amplitude = if (activePulse) 0.75 else 0.05
+                    
+                    val currentFreq = if (cycleTime < 0.25) twoPiF1 else twoPiF2
+                    val sampleVal = (Math.sin(currentFreq * timeInSec) * 32767 * amplitude).toInt().coerceIn(-32768, 32767)
                     
                     buffer[bufferIndex++] = (sampleVal and 0xff).toByte()
                     buffer[bufferIndex++] = ((sampleVal shr 8) and 0xff).toByte()

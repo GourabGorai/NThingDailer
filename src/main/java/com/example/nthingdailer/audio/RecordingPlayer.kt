@@ -1,6 +1,7 @@
 package com.example.nthingdailer.audio
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
@@ -19,12 +20,19 @@ object RecordingPlayer {
         stop()
 
         val file = File(path)
-        if (!file.exists() || file.length() == 0L) {
-            AudioFileGenerator.generateSampleWavFile(file)
+        // Ensure the file exists and contains valid audio data (>1000 bytes)
+        if (!file.exists() || file.length() < 1000L) {
+            AudioFileGenerator.generateSampleWavFile(file, durationSeconds = 5)
         }
 
         try {
             mediaPlayer = MediaPlayer().apply {
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                setAudioAttributes(audioAttributes)
+                setVolume(1.0f, 1.0f)
                 setDataSource(context, Uri.fromFile(file))
                 prepare()
                 start()

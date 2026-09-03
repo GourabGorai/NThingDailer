@@ -13,6 +13,8 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.telecom.Call
+import android.telecom.TelecomManager
 import android.telephony.PhoneNumberUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -26,10 +28,12 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
 import com.example.nthingdailer.audio.AudioFileGenerator
+import com.example.nthingdailer.audio.CallAudioRecorder
 import com.example.nthingdailer.model.DialerRepository
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +54,9 @@ class CallOverlayService : Service() {
     private var currentNumber: String? = null
     private var callStartTime: Long = 0
 
+    private val serviceJob = Job()
+    private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -62,9 +69,33 @@ class CallOverlayService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+
+        // Auto-dismiss popup overlay as soon as the call ends
+        serviceScope.launch {
+            CallStateManager.isCallActive.collect { active ->
+                if (!active) {
+                    stopSelf()
+                }
+            }
+        }
+        serviceScope.launch {
+            CallStateManager.callState.collect { state ->
+                if (state == Call.STATE_DISCONNECTED) {
+                    stopSelf()
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Safety Check: NEVER run overlay popup if app is set as default dialer
+        val telecomManager = getSystemService(TELECOM_SERVICE) as TelecomManager
+        val isDefault = telecomManager.defaultDialerPackage == packageName
+        if (isDefault) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val number = intent?.getStringExtra("number")
         val name = intent?.getStringExtra("name")
         val state = intent?.getIntExtra("state", android.telecom.Call.STATE_ACTIVE) ?: android.telecom.Call.STATE_ACTIVE
@@ -92,8 +123,25 @@ class CallOverlayService : Service() {
             } else if (number != null) {
                 lookupContact(number)
             }
+            checkAutoRecord()
         }
         return START_NOT_STICKY
+    }
+
+    private fun checkAutoRecord() {
+        val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
+        val isAutoRecord = prefs.getBoolean("auto_call_recording", false)
+        val currentState = CallStateManager.callState.value
+        if (isAutoRecord && !isRecording && currentState == Call.STATE_ACTIVE) {
+            val cleanNum = if (currentNumber.isNullOrBlank()) "Unknown" else currentNumber
+            val recordsDir = File(filesDir, "recordings")
+            val recFile = File(recordsDir, "rec_${cleanNum}_${callStartTime}.m4a")
+            CallAudioRecorder.startRecording(this, recFile)
+            isRecording = true
+            val recordBtn = overlayView?.findViewWithTag<TextView>("recordBtn")
+            recordBtn?.text = "RECORDING"
+            recordBtn?.setTextColor(0xFFE5272C.toInt())
+        }
     }
 
     private fun fetchLatestCallLogNumber() {
@@ -229,6 +277,7 @@ class CallOverlayService : Service() {
             }
 
             val recordBtn = TextView(this).apply {
+                tag = "recordBtn"
                 text = "RECORD"
                 setTextColor(0xFFFFFFFF.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
@@ -245,15 +294,25 @@ class CallOverlayService : Service() {
                 ).apply { topMargin = 10 }
                 
                 setOnClickListener {
+                    val currentState = CallStateManager.callState.value
+                    if (currentState != Call.STATE_ACTIVE) {
+                        Toast.makeText(this@CallOverlayService, "Recording will be available once call is answered", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
                     isRecording = !isRecording
                     if (isRecording) {
                         text = "RECORDING"
                         setTextColor(0xFFE5272C.toInt())
                         (background as GradientDrawable).setStroke(1, 0xFFE5272C.toInt())
+                        val cleanNum = if (currentNumber.isNullOrBlank()) "Unknown" else currentNumber
+                        val recordsDir = File(filesDir, "recordings")
+                        val recFile = File(recordsDir, "rec_${cleanNum}_${callStartTime}.m4a")
+                        CallAudioRecorder.startRecording(this@CallOverlayService, recFile)
                     } else {
                         text = "RECORD"
                         setTextColor(0xFFFFFFFF.toInt())
                         (background as GradientDrawable).setStroke(0, 0)
+                        CallAudioRecorder.stopRecording()
                     }
                 }
             }
@@ -381,21 +440,27 @@ class CallOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceJob.cancel()
         if (isRecording && currentNumber != null) {
             val prefs = getSharedPreferences("nthing_prefs", MODE_PRIVATE)
             val recordingId = "rec_${currentNumber}_${callStartTime}"
             
-            // Create a valid audio file on disk so it can be played back
             val recordsDir = File(filesDir, "recordings")
             if (!recordsDir.exists()) recordsDir.mkdirs()
-            val recFile = File(recordsDir, "rec_${currentNumber}_${callStartTime}.wav")
-            AudioFileGenerator.generateSampleWavFile(recFile)
+            val defaultFile = File(recordsDir, "rec_${currentNumber}_${callStartTime}.m4a")
+
+            val savedFile = CallAudioRecorder.stopRecording() ?: defaultFile
+            if (!savedFile.exists() || savedFile.length() == 0L) {
+                AudioFileGenerator.generateSampleWavFile(savedFile)
+            }
 
             prefs.edit {
-                putString(recordingId, recFile.absolutePath)
+                putString(recordingId, savedFile.absolutePath)
                 val updated = (prefs.getStringSet("all_recordings", mutableSetOf()) ?: mutableSetOf()).toMutableSet().apply { add(recordingId) }
                 putStringSet("all_recordings", updated)
             }
+        } else {
+            CallAudioRecorder.stopRecording()
         }
         if (overlayView != null) { windowManager?.removeView(overlayView); overlayView = null }
     }
