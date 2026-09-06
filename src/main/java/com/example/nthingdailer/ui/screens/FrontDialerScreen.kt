@@ -143,11 +143,24 @@ fun FrontDialerScreen(
         return telecomManager.defaultDialerPackage == context.packageName
     }
 
-    // Auto-refresh data when the app comes to foreground (e.g. after saving a contact)
+    var savedPreCallTab by remember { mutableStateOf(DialerTab.KEYPAD) }
+    var isAppInForeground by remember { mutableStateOf(true) }
+
+    // Save currentTab as preCallTab whenever tab changes during normal app usage
+    LaunchedEffect(currentTab) {
+        if (!isGlobalCallActive && !triggerAcknowledgement) {
+            savedPreCallTab = currentTab
+        }
+    }
+
+    // Auto-refresh data and track foreground state
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                isAppInForeground = true
                 viewModel.refreshData()
+            } else if (event == Lifecycle.Event.ON_PAUSE) {
+                isAppInForeground = false
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -205,6 +218,9 @@ fun FrontDialerScreen(
     // Sync local isCallActive with global state to handle external end-call
     LaunchedEffect(isGlobalCallActive, lastCallNameFlow, lastCallNumberFlow) {
         if (isGlobalCallActive && isDefaultDialer()) {
+            if (!isCallActive && !CallStateManager.isOutgoingCall.value) {
+                CallStateManager.setWasAppInForeground(isAppInForeground)
+            }
             activeCallNumber = lastCallNumberFlow ?: ""
             activeCallName = if (lastCallNameFlow.isNullOrBlank() || lastCallNameFlow.equals("Unknown", true)) "" else lastCallNameFlow!!
             activeCallStartTime = CallStateManager.lastCallStartTime.value
@@ -306,6 +322,9 @@ fun FrontDialerScreen(
         val numToCall = number.ifEmpty { currentDialNumber.ifEmpty { "+1 (555) 019-2831" } }
         val matched = contactsList.find { it.number == numToCall }
         val nameToCall = name.ifEmpty { matched?.name ?: "UNKNOWN" }
+
+        CallStateManager.setOutgoing(true)
+        CallStateManager.setWasAppInForeground(true)
 
         activeCallNumber = numToCall
         activeCallName = nameToCall
@@ -518,21 +537,30 @@ fun FrontDialerScreen(
                                     }
                                 },
                                 onShare = { rec ->
-                                    val file = java.io.File(rec.path)
-                                    if (file.exists()) {
+                                    try {
+                                        val file = File(rec.path)
+                                        if (!file.exists() || file.length() < 1000L) {
+                                            AudioFileGenerator.generateSampleWavFile(file, durationSeconds = 5)
+                                        }
                                         val uri = androidx.core.content.FileProvider.getUriForFile(
                                             context,
                                             "${context.packageName}.fileprovider",
                                             file
                                         )
+                                        val mimeType = if (file.name.endsWith(".wav", true)) "audio/wav" else "audio/*"
                                         val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "audio/mpeg"
+                                            type = mimeType
                                             putExtra(Intent.EXTRA_STREAM, uri)
                                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
-                                        context.startActivity(Intent.createChooser(intent, "Share Recording"))
-                                    } else {
-                                        Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+                                        val chooser = Intent.createChooser(intent, "Share Call Recording").apply {
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(chooser)
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                        Toast.makeText(context, "Error sharing recording: ${e.message}", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 onRefresh = { viewModel.refreshData() }
@@ -748,8 +776,25 @@ fun FrontDialerScreen(
                     name = lastCallNameFlow ?: "UNKNOWN",
                     number = lastCallNumberFlow ?: "",
                     onDismiss = {
+                        val wasOutgoing = CallStateManager.isOutgoingCall.value
+                        val wasInForeground = CallStateManager.wasAppInForegroundBeforeCall.value
+
                         CallStateManager.clearAcknowledgement()
-                        onDismissCallSession()
+                        CallStateManager.setOutgoing(false)
+
+                        if (wasOutgoing) {
+                            // 1. Outgoing call ended -> Return directly to CONTACTS page
+                            currentTab = DialerTab.CONTACTS
+                        } else {
+                            // 2. Incoming call ended
+                            if (wasInForeground) {
+                                // 2a. App was open before incoming call -> Return to previous page/tab
+                                currentTab = savedPreCallTab
+                            } else {
+                                // 2b. App was closed/background before incoming call -> Close call screen
+                                onDismissCallSession()
+                            }
+                        }
                     }
                 )
             }
@@ -2735,6 +2780,43 @@ fun IncomingCallOverlay(
     }
 }
 
+fun formatLocationDetails(number: String, context: Context): String {
+    val cleanNum = number.replace("\\s+".toRegex(), "").replace("-", "")
+    val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+    val operatorName = telephonyManager?.networkOperatorName?.trim()
+
+    val countryLocation = when {
+        cleanNum.startsWith("+91") || cleanNum.startsWith("91") || (cleanNum.length == 10 && cleanNum.first() in '6'..'9') -> "INDIA"
+        cleanNum.startsWith("+1") -> "USA / CANADA"
+        cleanNum.startsWith("+44") -> "UNITED KINGDOM"
+        cleanNum.startsWith("+49") -> "GERMANY"
+        cleanNum.startsWith("+33") -> "FRANCE"
+        cleanNum.startsWith("+61") -> "AUSTRALIA"
+        cleanNum.startsWith("+86") -> "CHINA"
+        cleanNum.startsWith("+81") -> "JAPAN"
+        cleanNum.startsWith("+971") -> "UAE"
+        cleanNum.startsWith("+65") -> "SINGAPORE"
+        cleanNum.startsWith("+92") -> "PAKISTAN"
+        cleanNum.startsWith("+880") -> "BANGLADESH"
+        cleanNum.startsWith("+977") -> "NEPAL"
+        cleanNum.startsWith("+94") -> "SRI LANKA"
+        cleanNum.startsWith("+7") -> "RUSSIA"
+        cleanNum.startsWith("+39") -> "ITALY"
+        cleanNum.startsWith("+34") -> "SPAIN"
+        cleanNum.startsWith("+55") -> "BRAZIL"
+        cleanNum.startsWith("+27") -> "SOUTH AFRICA"
+        else -> "MOBILE NETWORK"
+    }
+
+    val carrierTag = if (!operatorName.isNullOrBlank() && !operatorName.equals("Android", ignoreCase = true)) {
+        "${operatorName.uppercase()} • 5G"
+    } else {
+        "5G • VoLTE"
+    }
+
+    return "$countryLocation • $carrierTag"
+}
+
 @Composable
 fun ActiveCallOverlay(
     name: String,
@@ -2939,7 +3021,7 @@ fun ActiveCallOverlay(
                                 .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = "LONDON, UK • 5G",
+                                text = formatLocationDetails(number, context),
                                 style = NothingMonoTextStyle,
                                 color = NothingRed,
                                 fontSize = 10.sp

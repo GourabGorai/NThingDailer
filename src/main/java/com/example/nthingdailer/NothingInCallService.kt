@@ -119,6 +119,8 @@ class NothingInCallService : InCallService() {
         activeCalls.add(call)
         
         val isConference = call.details.hasProperty(Call.Details.PROPERTY_CONFERENCE)
+        val isOutgoing = (call.state == Call.STATE_DIALING || call.state == Call.STATE_CONNECTING || call.state == Call.STATE_SELECT_PHONE_ACCOUNT)
+        CallStateManager.setOutgoing(isOutgoing)
         
         // Primary call tracking
         if (currentCall == null || currentCall?.state == Call.STATE_DISCONNECTED) {

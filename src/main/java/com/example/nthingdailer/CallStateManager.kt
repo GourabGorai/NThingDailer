@@ -23,6 +23,20 @@ object CallStateManager {
     private val _triggerAcknowledgement = MutableStateFlow(false)
     val triggerAcknowledgement = _triggerAcknowledgement.asStateFlow()
 
+    private val _isOutgoingCall = MutableStateFlow(false)
+    val isOutgoingCall = _isOutgoingCall.asStateFlow()
+
+    private val _wasAppInForegroundBeforeCall = MutableStateFlow(false)
+    val wasAppInForegroundBeforeCall = _wasAppInForegroundBeforeCall.asStateFlow()
+
+    fun setOutgoing(isOutgoing: Boolean) {
+        _isOutgoingCall.value = isOutgoing
+    }
+
+    fun setWasAppInForeground(wasInForeground: Boolean) {
+        _wasAppInForegroundBeforeCall.value = wasInForeground
+    }
+
     fun updateCallState(active: Boolean, name: String? = null, number: String? = null, state: Int = Call.STATE_ACTIVE) {
         val wasActive = _isCallActive.value
         if (!active && wasActive) {

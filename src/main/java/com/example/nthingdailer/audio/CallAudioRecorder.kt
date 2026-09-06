@@ -24,11 +24,11 @@ object CallAudioRecorder {
             parent.mkdirs()
         }
 
-        // Audio sources to attempt for in-call voice capture
+        // Priority order for direct microphone call audio recording
         val sourcesToTry = listOf(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            MediaRecorder.AudioSource.VOICE_CALL,
-            MediaRecorder.AudioSource.MIC
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
         )
 
         for (source in sourcesToTry) {
@@ -54,7 +54,7 @@ object CallAudioRecorder {
                 mediaRecorder = recorder
                 currentOutputFile = outputFile
                 isRecordingActive = true
-                Log.d(TAG, "Call recording started with AudioSource: $source")
+                Log.d(TAG, "Call recording started directly from microphone with source: $source")
                 return true
             } catch (e: Exception) {
                 Log.e(TAG, "Could not start MediaRecorder with source $source: ${e.message}")
@@ -67,8 +67,7 @@ object CallAudioRecorder {
             }
         }
 
-        // Fallback generator if hardware recorder initialization failed
-        Log.w(TAG, "Hardware MediaRecorder unavailable. Using fallback generator.")
+        Log.w(TAG, "Hardware MediaRecorder failed on all sources. Using fallback generator.")
         currentOutputFile = outputFile
         isRecordingActive = true
         return true

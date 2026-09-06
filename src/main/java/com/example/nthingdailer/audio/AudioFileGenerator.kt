@@ -6,8 +6,8 @@ import java.io.FileOutputStream
 object AudioFileGenerator {
 
     /**
-     * Generates a valid 16-bit PCM Mono 44.1kHz WAV audio file with a loud, clear,
-     * synthesized call voice tone sequence so that MediaPlayer can play call recordings
+     * Generates a valid 16-bit PCM Mono 44.1kHz WAV audio file with a loud, rich,
+     * synthesized voice tone sequence so that MediaPlayer plays call recordings
      * clearly at full audible volume.
      */
     fun generateSampleWavFile(file: File, durationSeconds: Int = 5) {
@@ -89,20 +89,26 @@ object AudioFileGenerator {
                 val buffer = ByteArray(2048)
                 var bufferIndex = 0
                 
-                val f1 = 523.25 // C5 note (clear audible tone)
-                val f2 = 659.25 // E5 note
+                // Voice frequency harmonics (300Hz, 600Hz, 900Hz)
+                val f1 = 300.0
+                val f2 = 600.0
+                val f3 = 900.0
                 val twoPiF1 = 2.0 * Math.PI * f1
                 val twoPiF2 = 2.0 * Math.PI * f2
+                val twoPiF3 = 2.0 * Math.PI * f3
                 
                 for (i in 0 until numSamples) {
                     val timeInSec = i.toDouble() / sampleRate
-                    val cycleTime = timeInSec % 1.2
+                    val cycleTime = timeInSec % 1.5
                     
-                    val activePulse = cycleTime < 0.25 || (cycleTime in 0.35..0.6)
-                    val amplitude = if (activePulse) 0.75 else 0.05
+                    val isSpeechBurst = cycleTime < 0.35 || (cycleTime in 0.5..0.95)
+                    val amp = if (isSpeechBurst) 0.8 else 0.05
                     
-                    val currentFreq = if (cycleTime < 0.25) twoPiF1 else twoPiF2
-                    val sampleVal = (Math.sin(currentFreq * timeInSec) * 32767 * amplitude).toInt().coerceIn(-32768, 32767)
+                    val val1 = Math.sin(twoPiF1 * timeInSec) * 0.5
+                    val val2 = Math.sin(twoPiF2 * timeInSec) * 0.3
+                    val val3 = Math.sin(twoPiF3 * timeInSec) * 0.2
+                    
+                    val sampleVal = ((val1 + val2 + val3) * 32767 * amp).toInt().coerceIn(-32768, 32767)
                     
                     buffer[bufferIndex++] = (sampleVal and 0xff).toByte()
                     buffer[bufferIndex++] = ((sampleVal shr 8) and 0xff).toByte()
